@@ -75,7 +75,7 @@ class Settings {
 				'error_log',
 			),
 			'max_file_mb'              => 10,
-			'exec_extensions'          => array( 'php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phtml', 'pht', 'phar', 'phps', 'inc', 'shtml', 'cgi', 'pl', 'py', 'sh', 'asp', 'aspx', 'jsp' ),
+			'exec_extensions'          => array( 'php', 'php2', 'php3', 'php4', 'php5', 'php6', 'php7', 'php8', 'phtml', 'pht', 'phar', 'phps', 'inc', 'shtml', 'cgi', 'pl', 'py', 'sh', 'asp', 'aspx', 'jsp' ),
 			'exec_filenames'           => array( '.htaccess', '.user.ini', 'php.ini', 'web.config' ),
 			'tick_seconds'             => 15,
 

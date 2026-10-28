@@ -243,10 +243,10 @@ class Upload_Gate {
 	 * @param string $name Upload name.
 	 */
 	private function note_storage_bypass( $name ) {
-		if ( get_transient( 'wpcybersec_storage_bypass' ) ) {
+		if ( Network::get_transient( 'wpcybersec_storage_bypass' ) ) {
 			return;
 		}
-		set_transient( 'wpcybersec_storage_bypass', 1, HOUR_IN_SECONDS );
+		Network::set_transient( 'wpcybersec_storage_bypass', 1, HOUR_IN_SECONDS ); // One data folder per network: one note per hour for all sites.
 		$this->log(
 			'upload_not_held',
 			/* translators: %s: file name */

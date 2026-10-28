@@ -219,6 +219,10 @@ class Reports_Page {
 			case 'no_items':
 				$this->notice( 'warn', 'info-outline', __( 'Select at least one item first.', 'qartvelo-guard' ) );
 				break;
+			case 'too_many':
+				/* translators: %s: number of items */
+				$this->notice( 'warn', 'info-outline', sprintf( __( 'Select at most %s items at a time.', 'qartvelo-guard' ), number_format_i18n( Admin::MAX_BULK ) ) );
+				break;
 			case 'failed':
 				$this->notice( 'bad', 'warning', __( 'The action could not be completed. Reload the page and try again.', 'qartvelo-guard' ) );
 				break;
@@ -608,17 +612,18 @@ class Reports_Page {
 		echo '<td class="column-item">' . $this->item_cell( $item, $details ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
 
 		// Source.
-		echo '<td class="column-source">' . $this->source_cell( $item, $details ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		// data-label: the narrow layout hides the table header and prints these instead.
+		echo '<td class="column-source" data-label="' . esc_attr__( 'Source', 'qartvelo-guard' ) . '">' . $this->source_cell( $item, $details ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
 
 		// Detected.
 		$ts = Admin::utc_ts( $item['created_at'] );
-		echo '<td class="column-detected"><span title="' . esc_attr( Admin::datetime( $ts ) ) . '">' . esc_html( Admin::ago( $ts ) ) . '</span><span class="wpcs-sub">' . esc_html( $ts ? wp_date( get_option( 'date_format' ), $ts ) : '' ) . '</span></td>';
+		echo '<td class="column-detected" data-label="' . esc_attr__( 'Detected', 'qartvelo-guard' ) . '"><span title="' . esc_attr( Admin::datetime( $ts ) ) . '">' . esc_html( Admin::ago( $ts ) ) . '</span><span class="wpcs-sub">' . esc_html( $ts ? wp_date( get_option( 'date_format' ), $ts ) : '' ) . '</span></td>';
 
 		// Verdict.
-		echo '<td class="column-verdict">' . $this->verdict_cell( $item, $details ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo '<td class="column-verdict" data-label="' . esc_attr__( 'Verdict', 'qartvelo-guard' ) . '">' . $this->verdict_cell( $item, $details ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
 
 		// Status.
-		echo '<td class="column-status" data-wpcs-status>' . $this->status_cell( $item, $held ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo '<td class="column-status" data-label="' . esc_attr__( 'Status', 'qartvelo-guard' ) . '" data-wpcs-status>' . $this->status_cell( $item, $held ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
 
 		// Actions.
 		echo '<td class="column-actions">' . $this->actions_cell( $item, $available, $held ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
@@ -1049,6 +1054,20 @@ class Reports_Page {
 	}
 
 	/**
+	 * Whether an activity row was written by a WP-CLI command (Logger adds the actor).
+	 *
+	 * @param array $row Log row.
+	 * @return bool
+	 */
+	public static function logged_by_cli( array $row ) {
+		if ( ! isset( $row['context'] ) ) {
+			return false;
+		}
+		$context = is_array( $row['context'] ) ? $row['context'] : json_decode( (string) $row['context'], true );
+		return is_array( $context ) && isset( $context['actor'] ) && 'wp-cli' === $context['actor'];
+	}
+
+	/**
 	 * @param array $details Install details.
 	 * @return string
 	 */
@@ -1063,6 +1082,9 @@ class Reports_Page {
 		}
 		if ( 'url' === $src ) {
 			return $is_theme ? __( 'Theme from a URL', 'qartvelo-guard' ) : __( 'Plugin from a URL', 'qartvelo-guard' );
+		}
+		if ( 'cli' === $src ) {
+			return $is_theme ? __( 'Theme installed with WP-CLI', 'qartvelo-guard' ) : __( 'Plugin installed with WP-CLI', 'qartvelo-guard' );
 		}
 		return $is_theme ? __( 'Theme install', 'qartvelo-guard' ) : __( 'Plugin install', 'qartvelo-guard' );
 	}
@@ -1108,7 +1130,7 @@ class Reports_Page {
 			case Store::TYPE_UPLOAD:
 				return '<span class="wpcs-badge wpcs-badge--ok">' . esc_html__( 'Clean', 'qartvelo-guard' ) . '</span><span class="wpcs-sub">' . esc_html__( 'Held by policy', 'qartvelo-guard' ) . '</span>';
 			case Store::TYPE_INSTALL:
-				return '<span class="wpcs-badge wpcs-badge--ok">' . esc_html__( 'Clean', 'qartvelo-guard' ) . '</span><span class="wpcs-sub">' . esc_html__( 'New install held by policy', 'qartvelo-guard' ) . '</span>';
+				return '<span class="wpcs-badge wpcs-badge--ok">' . esc_html__( 'Clean', 'qartvelo-guard' ) . '</span><span class="wpcs-sub">' . esc_html( ! empty( $details['update'] ) ? __( 'Update held by policy', 'qartvelo-guard' ) : __( 'New install held by policy', 'qartvelo-guard' ) ) . '</span>';
 			case Store::TYPE_FILE:
 				if ( isset( $details['change'] ) && 'modified' === $details['change'] ) {
 					return '<span class="wpcs-badge wpcs-badge--medium">' . esc_html__( 'Modified', 'qartvelo-guard' ) . '</span><span class="wpcs-sub">' . esc_html__( 'Changed since the baseline', 'qartvelo-guard' ) . '</span>';
@@ -1201,7 +1223,8 @@ class Reports_Page {
 		$not_file = Store::TYPE_USER === $type || Db_Scanner::is_db_item( $item );
 		if ( Store::TYPE_USER === $type ) {
 			$set                = array( 'approve', 'deny' );
-			$labels['approve']  = array( __( 'Allow', 'qartvelo-guard' ), 'yes', 'wpcs-btn-approve' );
+			// Neither choice is the obvious one for an unknown administrator: both stay neutral and ask first.
+			$labels['approve']  = array( __( 'Trust this admin', 'qartvelo-guard' ), 'yes', '' );
 			$labels['deny']     = array( __( 'Remove admin role', 'qartvelo-guard' ), 'admin-users', 'wpcs-btn-danger' );
 		} elseif ( Db_Scanner::is_db_item( $item ) ) {
 			$set = array( 'ignore' );
@@ -1283,11 +1306,22 @@ class Reports_Page {
 					/* translators: %s: user login */
 					? ' data-confirm="' . esc_attr( sprintf( __( 'Remove the administrator role from %s? The account becomes a subscriber and is signed out everywhere.', 'qartvelo-guard' ), $name ) ) . '"'
 					: '' )
+				. ( Store::TYPE_USER === $type && 'approve' === $action
+					/* translators: %s: user login */
+					? ' data-confirm="' . esc_attr( sprintf( __( 'Trust %s as an administrator? The account keeps full control of the site and is not reported again.', 'qartvelo-guard' ), $name ) ) . '"'
+					: '' )
+				. ( Store::TYPE_USER !== $type && 'deny' === $action
+					/* translators: %s: file name */
+					? ' data-confirm="' . esc_attr( sprintf( __( 'Deny %s? The held copy is deleted and cannot be recovered; the file would have to be uploaded again.', 'qartvelo-guard' ), $name ) ) . '"'
+					: '' )
 				. '><span class="dashicons dashicons-' . esc_attr( $label[1] ) . '" aria-hidden="true"></span>' . esc_html( $label[0] ) . '</button>';
 		}
 		$html .= '</div>';
 		if ( $critical && in_array( $item['status'], array( Store::STATUS_PENDING, Store::STATUS_QUARANTINED, Store::STATUS_RESTORED ), true ) ) {
-			$html .= '<p class="wpcs-critical-note"><span class="dashicons dashicons-shield" aria-hidden="true"></span><span>' . esc_html__( 'Critical file: it cannot be quarantined. If you did not make this change, restore it from a backup or the official copy.', 'qartvelo-guard' ) . '</span></p>';
+			$note  = in_array( 'restore_official', $available, true )
+				? __( 'Critical file: it cannot be quarantined. If you did not make this change, use Restore official file.', 'qartvelo-guard' )
+				: __( 'Critical file: it cannot be quarantined and has no official copy to restore here (wp-config.php and version.php are specific to this site). If you did not make this change, restore it from a backup; Changes shows what was edited.', 'qartvelo-guard' );
+			$html .= '<p class="wpcs-critical-note"><span class="dashicons dashicons-shield" aria-hidden="true"></span><span>' . esc_html( $note ) . '</span></p>';
 		}
 
 		$html  .= '<div class="wpcs-row-links">';
@@ -2485,6 +2519,9 @@ class Reports_Page {
 			$meta  = Admin::event_meta( $event );
 			$ts    = Admin::utc_ts( isset( $row['created_at'] ) ? $row['created_at'] : '' );
 			$user  = Admin::user_name( isset( $row['user_id'] ) ? $row['user_id'] : 0 );
+			if ( '' === $user && self::logged_by_cli( $row ) ) {
+				$user = 'WP-CLI';
+			}
 			$url   = Admin::page_url(
 				Admin::PAGE_REPORTS,
 				array(

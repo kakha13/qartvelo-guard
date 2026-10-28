@@ -305,6 +305,7 @@ class Scan_Job {
 			// Directory being listed when a tick ran out of time: { d: stack entry, n: entries done }.
 			'cursor'       => null,
 			'resumed'      => array(),
+			'unreadable'   => array(),
 			'symlinks'     => 0,
 			'symlink_list' => array(),
 			'unscannable'  => 0,
@@ -330,6 +331,7 @@ class Scan_Job {
 			'modified'     => 0,
 			'deleted'      => 0,
 			'threats'      => 0,
+			'new_threats'  => 0,
 			'quarantined'  => 0,
 			'skipped'      => 0,
 			'current'      => '',
@@ -839,8 +841,11 @@ class Scan_Job {
 			'modified'     => (int) $state['modified'],
 			'deleted'      => (int) $state['deleted'],
 			'threats'      => (int) $state['threats'],
+			'new_threats'  => isset( $state['new_threats'] ) ? (int) $state['new_threats'] : null,
 			'quarantined'  => (int) $state['quarantined'],
 			'skipped'      => (int) $state['skipped'],
+			'unreadable'   => isset( $state['unreadable'] ) ? count( (array) $state['unreadable'] ) : 0,
+			'locked_out'   => ! empty( $this->locked_out ),
 			'started_at'   => (int) $state['started_at'],
 			'finished_at'  => (int) $state['finished_at'],
 			'current'      => (string) $state['current'],
@@ -871,12 +876,14 @@ class Scan_Job {
 			'skip'         => array(),
 			'cursor'       => null,
 			'resumed'      => array(),
+			'unreadable'   => array(),
 			'symlinks'     => 0,
 			'symlink_list' => array(),
 			'unscannable'  => 0,
 			'unscan_list'  => array(),
 			'mem_limited'  => 0,
 			'tmp_dir'      => '',
+			'new_threats'  => 0,
 		);
 	}
 
@@ -1116,7 +1123,7 @@ class Scan_Job {
 
 			$dh = @opendir( $abs_dir ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- errors are handled through the return value.
 			if ( ! $dh ) {
-				++$this->state['skipped'];
+				$this->note_unreadable( $rel_dir, true );
 				continue;
 			}
 
@@ -1247,7 +1254,7 @@ class Scan_Job {
 	private function list_top( $handle, &$buffer, $dir ) {
 		$dh = @opendir( $dir ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- errors are handled through the return value.
 		if ( ! $dh ) {
-			++$this->state['skipped'];
+			$this->note_unreadable( $dir, true );
 			return;
 		}
 		$count = 0;
@@ -1368,7 +1375,11 @@ class Scan_Job {
 				$stat              = $this->stat( $abs );
 				if ( null === $stat ) {
 					// Vanished or unreadable between listing and processing.
-					++$this->state['skipped'];
+					if ( @is_file( $abs ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+						$this->note_unreadable( $rel, false ); // Still there, so its row is kept.
+					} else {
+						++$this->state['skipped'];
+					}
 				} else {
 					$row = isset( $manifest[ $hashes[ $rel ] ] ) ? $manifest[ $hashes[ $rel ] ] : null;
 
@@ -2313,6 +2324,8 @@ class Scan_Job {
 		if ( $existing ) {
 			return;
 		}
+		// Reported for the first time (alerts are only sent for these).
+		$this->state['new_threats'] = ( isset( $this->state['new_threats'] ) ? (int) $this->state['new_threats'] : 0 ) + 1;
 
 		$severity = $severity > 0 ? $severity : max( Store::SEV_HIGH, wpcybersec()->scanner->max_severity( $hits ) );
 		$details  = self::base_details(
@@ -2567,9 +2580,10 @@ class Scan_Job {
 				$delete = array();
 				$keep   = array();
 				foreach ( $rows as $row ) {
-					if ( $this->in_resumed_dir( (string) $row['path'] ) ) {
-						// Listed over several ticks: a file added or renamed meanwhile
-						// can have been missed, so its row is kept, not deleted.
+					if ( $this->in_resumed_dir( (string) $row['path'] ) || $this->is_unreadable( (string) $row['path'] ) ) {
+						// Listed over several ticks (a file added or renamed meanwhile
+						// can have been missed) or not readable this time: the row is
+						// kept, not deleted, so the file is not "new" on the next scan.
 						$keep[] = $row['path_hash'];
 						continue;
 					}
@@ -2626,8 +2640,10 @@ class Scan_Job {
 				'modified'     => $this->state['modified'],
 				'deleted'      => $this->state['deleted'],
 				'threats'      => $this->state['threats'],
+				'new_threats'  => isset( $this->state['new_threats'] ) ? (int) $this->state['new_threats'] : 0,
 				'quarantined'  => $this->state['quarantined'],
 				'skipped'      => $this->state['skipped'],
+				'unreadable'   => isset( $this->state['unreadable'] ) ? count( (array) $this->state['unreadable'] ) : 0,
 				'database'     => ! empty( $this->state['database'] ),
 				'db_findings'  => isset( $this->state['db_findings'] ) ? (int) $this->state['db_findings'] : 0,
 				'missing_core' => isset( $this->state['missing_core'] ) ? (int) $this->state['missing_core'] : -1,
@@ -2638,6 +2654,19 @@ class Scan_Job {
 				'extra_roots'  => count( (array) $this->state['extra'] ),
 			)
 		);
+		if ( ! empty( $this->state['unreadable'] ) ) {
+			$list = array_values( (array) $this->state['unreadable'] );
+			wpcybersec()->logger->log(
+				'scan_unreadable',
+				sprintf(
+					/* translators: 1: number of folders and files, 2: examples */
+					_n( '%1$d folder or file could not be read by the web server user and was skipped; its earlier fingerprints were kept. Give the web server user read access so it is scanned again: %2$s', '%1$d folders or files could not be read by the web server user and were skipped; their earlier fingerprints were kept. Give the web server user read access so they are scanned again: %2$s', count( $list ), 'qartvelo-guard' ),
+					count( $list ),
+					implode( ', ', array_slice( $list, 0, 5 ) ) . ( count( $list ) > 5 ? ', ...' : '' )
+				),
+				array( 'id' => $this->state['id'], 'paths' => array_slice( $list, 0, 20 ) )
+			);
+		}
 
 		$notifier = wpcybersec()->notifier;
 		if ( $notifier && method_exists( $notifier, 'scan_finished' ) ) {
@@ -2653,8 +2682,51 @@ class Scan_Job {
 	}
 
 	/**
-	 * Whether a manifest path lies in a folder that was listed over several
-	 * ticks (a subfolder missed there would take its whole tree with it).
+	 * Remembers a folder or file the scan could not read (permissions), so
+	 * finish() keeps its manifest rows instead of treating them as deleted and
+	 * reporting every file in it as new on the next scan.
+	 *
+	 * @param string $path   Manifest path (a folder without its trailing slash).
+	 * @param bool   $is_dir Folder (its whole subtree) or one file.
+	 */
+	private function note_unreadable( $path, $is_dir ) {
+		++$this->state['skipped'];
+		if ( ! isset( $this->state['unreadable'] ) || ! is_array( $this->state['unreadable'] ) ) {
+			$this->state['unreadable'] = array();
+		}
+		$path  = Store::db_text( (string) $path );
+		$entry = $is_dir ? rtrim( $path, '/' ) . '/' : $path;
+		if ( count( $this->state['unreadable'] ) >= 100 || in_array( $entry, $this->state['unreadable'], true ) ) {
+			return;
+		}
+		$this->state['unreadable'][] = $entry;
+	}
+
+	/**
+	 * Whether a manifest path is (inside) something note_unreadable() recorded.
+	 *
+	 * @param string $path Manifest path.
+	 * @return bool
+	 */
+	private function is_unreadable( $path ) {
+		if ( empty( $this->state['unreadable'] ) ) {
+			return false;
+		}
+		foreach ( (array) $this->state['unreadable'] as $entry ) {
+			$entry = (string) $entry;
+			if ( '/' === substr( $entry, -1 ) ) {
+				if ( '/' === $entry || 0 === strpos( $path, $entry ) ) {
+					return true;
+				}
+			} elseif ( $path === $entry ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Whether a manifest path is inside a folder listed over several ticks.
 	 *
 	 * @param string $path Manifest path.
 	 * @return bool
@@ -3235,6 +3307,7 @@ class Scan_Job {
 			'modified'     => 0,
 			'deleted'      => 0,
 			'threats'      => 0,
+			'new_threats'  => 0,
 			'quarantined'  => 0,
 			'skipped'      => 0,
 			'started_at'   => 0,

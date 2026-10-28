@@ -30,6 +30,9 @@ class Paths {
 	/** @var string|null Real data folder path with a trailing slash ('' when unknown). */
 	private static $data_real = null;
 
+	/** @var string Real path of the folder around the random data folder inside uploads/qartvelo-guard ('' otherwise). */
+	private static $outer_real = '';
+
 	/** @var string[]|null config_includes() cache. */
 	private static $loaded = null;
 
@@ -219,9 +222,10 @@ class Paths {
 	 * Drops the cached scan set (tests, settings changes in the same request).
 	 */
 	public static function reset() {
-		self::$set       = null;
-		self::$data_real = null;
-		self::$loaded    = null;
+		self::$set        = null;
+		self::$data_real  = null;
+		self::$outer_real = '';
+		self::$loaded     = null;
 	}
 
 	/**
@@ -671,6 +675,13 @@ class Paths {
 		if ( '' !== $data && 0 === strpos( $rel_dir, $data ) ) {
 			return true;
 		}
+		// The deny files the plugin writes around its random data folder
+		// (uploads/qartvelo-guard/.htaccess, index.php, web.config). Only
+		// those three names: anything else dropped into that folder is scanned.
+		$outer = self::outer_rel();
+		if ( '' !== $outer && in_array( basename( rtrim( $rel, '/' ) ), Storage::DENY_FILES, true ) && trailingslashit( dirname( rtrim( $rel, '/' ) ) ) === $outer ) {
+			return true;
+		}
 		if ( self::is_absolute( $rel ) ) {
 			// A file outside the scan root: the exclusions are written relative to
 			// the WordPress folder ("wp-content/cache/"), so they are also tested
@@ -685,25 +696,55 @@ class Paths {
 	}
 
 	/**
+	 * Resolves the data folder once per request. Both sides are resolved with
+	 * realpath(), so a data folder reached through a symlink (or given with
+	 * "..") is still recognised. When the data folder is the random folder
+	 * inside uploads/qartvelo-guard, the folder around it is remembered too:
+	 * the plugin writes its deny files there (see is_excluded()).
+	 */
+	private static function resolve_data() {
+		if ( null !== self::$data_real ) {
+			return;
+		}
+		self::$data_real  = '';
+		self::$outer_real = '';
+		$dir              = function_exists( 'wpcybersec' ) && wpcybersec()->storage ? (string) wpcybersec()->storage->data_dir() : '';
+		if ( '' === $dir ) {
+			return;
+		}
+		$real            = realpath( $dir );
+		self::$data_real = trailingslashit( wp_normalize_path( $real ? $real : $dir ) );
+		if ( Storage::UPLOADS_FOLDER === basename( dirname( $dir ) ) && preg_match( '/^[a-z0-9]{32}$/', basename( $dir ) ) ) {
+			self::$outer_real = trailingslashit( dirname( untrailingslashit( self::$data_real ) ) );
+		}
+	}
+
+	/**
 	 * The plugin's data folder as a relative path (scan root) with a trailing
-	 * slash. Both sides are resolved with realpath(), so a data folder reached
-	 * through a symlink (or given with "..") is still recognised.
+	 * slash.
 	 *
 	 * @return string
 	 */
 	private static function data_rel() {
-		if ( null === self::$data_real ) {
-			self::$data_real = '';
-			$dir             = function_exists( 'wpcybersec' ) && wpcybersec()->storage ? (string) wpcybersec()->storage->data_dir() : '';
-			if ( '' !== $dir ) {
-				$real            = realpath( $dir );
-				self::$data_real = trailingslashit( wp_normalize_path( $real ? $real : $dir ) );
-			}
-		}
+		self::resolve_data();
 		if ( '' === self::$data_real ) {
 			return '';
 		}
 		return trailingslashit( self::rel( untrailingslashit( self::$data_real ) ) );
+	}
+
+	/**
+	 * The folder around the random data folder (uploads/qartvelo-guard) as a
+	 * relative path with a trailing slash, '' for any other data folder.
+	 *
+	 * @return string
+	 */
+	private static function outer_rel() {
+		self::resolve_data();
+		if ( '' === self::$outer_real ) {
+			return '';
+		}
+		return trailingslashit( self::rel( untrailingslashit( self::$outer_real ) ) );
 	}
 
 	/**

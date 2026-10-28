@@ -213,19 +213,27 @@
 	line-height: 1.45;
 }
 
-.wpcs-option.is-selected .wpcs-option__title .dashicons,
+/* Selected card icon. Two rules on purpose, see the .wpcs-option rules in base.css. */
+.wpcs-option.is-selected .wpcs-option__title .dashicons {
+	background: var(--wpcs-brand-2);
+	color: #fff;
+}
+
 .wpcs-option:has(input:checked) .wpcs-option__title .dashicons {
 	background: var(--wpcs-brand-2);
 	color: #fff;
 }
 
-.wpcs-option input[type="radio"]:focus-visible + .wpcs-option__tag,
+/* Keyboard focus: a ring outside the card, so it differs from the selected state's border and
+   glow. :focus-within is the fallback for browsers without :has() and also follows a click. */
 .wpcs-option:focus-within {
-	outline: none;
+	outline: 2px solid var(--wpcs-brand-2);
+	outline-offset: 3px;
 }
 
-.wpcs-option:focus-within {
-	box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.25);
+.wpcs-option:has(input:focus-visible) {
+	outline: 2px solid var(--wpcs-brand-2);
+	outline-offset: 3px;
 }
 
 .wpcs-custom-hint {
@@ -1033,8 +1041,34 @@ body.js .wpcs-savebar.is-idle {
 	height: 16px;
 }
 
+.wpcs-cmds > summary .wpcs-cmds__hide,
 .wpcs-cmds[open] > summary .wpcs-cmds__show {
+	display: none;
+}
+
+.wpcs-cmds[open] > summary .wpcs-cmds__hide {
+	display: inline;
 	color: var(--wpcs-ink-2);
+}
+
+.wpcs-help-more {
+	margin: 8px 0 0;
+	font-size: 12px;
+	color: var(--wpcs-ink-2);
+}
+
+.wpcs-help-more > summary {
+	cursor: pointer;
+	color: var(--wpcs-brand-2);
+}
+
+.wpcs-help-more ul {
+	margin: 6px 0 0 18px;
+	list-style: disc;
+}
+
+.wpcs-help-more li {
+	margin: 0 0 4px;
 }
 
 .wpcs-cmds__label {
@@ -1481,12 +1515,30 @@ html:has(body.wpcs-settings-screen) {
 		flex-wrap: wrap;
 	}
 
+	/* Only the number circles fit. The labels stay for screen readers (font-size 0), and the
+	   link of a finished step covers its whole step so it keeps a tap target and a focus ring. */
 	.wpcs-wizard .wpcs-steps li {
 		font-size: 0;
 	}
 
 	.wpcs-wizard .wpcs-steps li::before {
 		font-size: 12px;
+	}
+
+	.wpcs-wizard .wpcs-steps li a {
+		position: absolute;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		left: 0;
+		z-index: 2;
+		min-height: 34px;
+		border-radius: var(--wpcs-radius-sm);
+	}
+
+	.wpcs-wizard .wpcs-steps li a:focus {
+		outline: 2px solid var(--wpcs-brand-2);
+		outline-offset: 2px;
 	}
 
 	.wpcs-features,

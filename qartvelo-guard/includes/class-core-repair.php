@@ -75,7 +75,7 @@ class Core_Repair {
 	const OFF_SUFFIX = '.wpcs-off';
 
 	/** Seconds after which an unfinished swap is rolled back by the next request. */
-	const STALE = 120;
+	const STALE = 300;
 
 	/** Seconds one extract or verify request works. */
 	const BUDGET = 8.0;
@@ -876,7 +876,11 @@ class Core_Repair {
 	public function start() {
 		$this->recover();
 		$state = $this->state();
-		if ( $this->is_active( $state ) && (int) $state['updated_at'] > time() - 15 * MINUTE_IN_SECONDS && 'swap' !== $state['step'] ) {
+		if ( $this->is_active( $state ) && isset( $state['step'] ) && in_array( $state['step'], array( 'swap', 'finish' ), true ) ) {
+			// Another request is exchanging the files right now: its work folder must not be removed under it.
+			return new \WP_Error( 'wpcybersec_core_busy', __( 'A core reinstall is swapping the files right now. Wait a minute, then look at its status again.', 'qartvelo-guard' ) );
+		}
+		if ( $this->is_active( $state ) && (int) $state['updated_at'] > time() - 15 * MINUTE_IN_SECONDS ) {
 			return $state; // Resume the job that is already there.
 		}
 		if ( $this->is_active( $state ) ) {
@@ -1328,10 +1332,12 @@ class Core_Repair {
 		}
 		if ( '' !== $error ) {
 			$this->maintenance_on();
+			$this->journal( null, $state ); // Still alive: the loopback checks took a while, and a status poll must not roll this job back.
 			$problems = $this->rollback( $this->swapping['journal'], $plan );
 			self::opcache_reset();
 			$this->maintenance_off();
 			$this->swapping['done'] = true;
+			$this->journal( null, $state );
 			$after                  = $this->loopback();
 			$message                = sprintf(
 				/* translators: 1: what failed, 2: HTTP status of the home page after the rollback */
@@ -1387,7 +1393,7 @@ class Core_Repair {
 				/* translators: %s: file name */
 				return sprintf( __( 'Could not replace %s.', 'qartvelo-guard' ), $file );
 			}
-			$this->swapping['journal'][] = array( 'file_in', $file, $had );
+			$this->journal( array( 'file_in', $file, $had ), $state ); // Saved at once, like the folder steps, so recover() can undo it after a hard kill.
 		}
 		foreach ( $plan['remove'] as $file ) {
 			if ( @is_file( $abs . $file ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
@@ -1395,7 +1401,7 @@ class Core_Repair {
 					/* translators: %s: file name */
 					return sprintf( __( 'Could not move %s aside.', 'qartvelo-guard' ), $file );
 				}
-				$this->swapping['journal'][] = array( 'file_removed', $file );
+				$this->journal( array( 'file_removed', $file ), $state );
 			}
 		}
 		$this->journal( null, $state );

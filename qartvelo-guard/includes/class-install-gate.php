@@ -109,16 +109,23 @@ class Install_Gate {
 		$settings  = $plugin->settings;
 		$is_update = $this->is_update( $hook_extra );
 
+		$slug = basename( untrailingslashit( wp_normalize_path( $source ) ) );
+		if ( '' === sanitize_key( $slug ) ) {
+			return $source;
+		}
+		// A ZIP of a plugin or theme that is already installed ("Replace current
+		// with uploaded", wp plugin install --force, a new version of this
+		// plugin itself) arrives as an install: it replaces code that already
+		// runs here, so it is an update and "hold updates" decides.
+		if ( ! $is_update && '' !== self::installed_dir( $type, $slug ) ) {
+			$is_update = true;
+		}
+
 		if ( $is_update ) {
 			if ( ! $settings->get( 'hold_updates', false ) ) {
 				return $source;
 			}
 		} elseif ( 'hold' !== $settings->get( 'install_mode', 'hold' ) ) {
-			return $source;
-		}
-
-		$slug = basename( untrailingslashit( wp_normalize_path( $source ) ) );
-		if ( '' === sanitize_key( $slug ) ) {
 			return $source;
 		}
 
@@ -139,9 +146,11 @@ class Install_Gate {
 			return $source;
 		}
 
-		list( $hits, $partial, $verified ) = $this->scan_package( self::local_path( $source ), $type, $slug, $info['version'] );
-		$info['checksum_verified']         = $verified;
-		$severity               = $this->max_severity( $hits );
+		list( $hits, $partial, $verified, $unchanged ) = $this->scan_package( self::local_path( $source ), $type, $slug, $info['version'] );
+		$info['checksum_verified']                     = $verified;
+		$info['unchanged_files']                       = $unchanged;
+		$info['self_package']                          = 'plugin' === $type && $slug === self::own_slug();
+		$severity = $this->max_severity( $hits );
 		$display                = self::display_name( '' !== $info['name'] ? $info['name'] : $slug );
 
 		$this->hold_item( $type, $slug, $version, $is_update, $info, $hits, $partial, $severity );
@@ -202,7 +211,9 @@ class Install_Gate {
 					'hits'           => array_slice( $hits, 0, 50 ),
 					'scan_partial'   => (bool) $partial,
 					'request_uri'    => self::request_uri(),
-				) + ( ! empty( $info['checksum_verified'] ) ? array( 'checksum_verified' => (int) $info['checksum_verified'] ) : array() ),
+				) + ( ! empty( $info['checksum_verified'] ) ? array( 'checksum_verified' => (int) $info['checksum_verified'] ) : array() )
+					+ ( ! empty( $info['unchanged_files'] ) ? array( 'unchanged_files' => (int) $info['unchanged_files'] ) : array() )
+					+ ( ! empty( $info['self_package'] ) ? array( 'self_package' => true ) : array() ),
 			)
 		);
 		if ( ! $id ) {
@@ -672,6 +683,31 @@ class Install_Gate {
 	}
 
 	/**
+	 * Where a plugin or theme with this folder name is installed, '' when it is not.
+	 *
+	 * @param string $type plugin | theme.
+	 * @param string $slug Folder name.
+	 * @return string
+	 */
+	public static function installed_dir( $type, $slug ) {
+		$slug = (string) $slug;
+		if ( '' === $slug || '' === sanitize_key( $slug ) || '.' === $slug || '..' === $slug ) {
+			return '';
+		}
+		$dir = ( 'theme' === $type ? get_theme_root() : WP_PLUGIN_DIR ) . '/' . $slug;
+		return @is_dir( $dir ) ? untrailingslashit( wp_normalize_path( $dir ) ) : ''; // phpcs:ignore WordPress.PHP.NoSilencedErrors
+	}
+
+	/**
+	 * This plugin's own folder name.
+	 *
+	 * @return string
+	 */
+	public static function own_slug() {
+		return basename( untrailingslashit( wp_normalize_path( WPCYBERSEC_DIR ) ) );
+	}
+
+	/**
 	 * Allowlist slug for an approved update of one version.
 	 *
 	 * @param string $slug    Folder.
@@ -887,15 +923,15 @@ class Install_Gate {
 	 * @param string $type    plugin | theme.
 	 * @param string $slug    Package folder name.
 	 * @param string $version Version from the package header.
-	 * @return array [ hits, partial, verified (files whose hits the official checksums cleared) ]
+	 * @return array [ hits, partial, verified (files whose hits the official checksums cleared), unchanged (files identical to the installed copy) ]
 	 */
 	private function scan_package( $dir, $type = '', $slug = '', $version = '' ) {
 		$scanner = wpcybersec()->scanner;
 		if ( '' === (string) $dir ) {
-			return array( array(), true, 0 ); // Not reachable as a local folder: not checked, shown as partial.
+			return array( array(), true, 0, 0 ); // Not reachable as a local folder: not checked, shown as partial.
 		}
 		if ( ! $scanner || ! method_exists( $scanner, 'scan_file' ) || ! is_dir( $dir ) ) {
-			return array( array(), false, 0 );
+			return array( array(), false, 0, 0 );
 		}
 		$base     = trailingslashit( wp_normalize_path( $dir ) );
 		$deadline = microtime( true ) + self::SCAN_SECONDS;
@@ -903,6 +939,11 @@ class Install_Gate {
 		$hits     = array();
 		$partial  = false;
 		$verified = 0;
+		// A file identical to the one already installed under the same name is
+		// code that runs here today, so its matches are not news (this plugin's
+		// own signature file, for example, matches the patterns it looks for).
+		$installed = self::installed_dir( $type, $slug );
+		$unchanged = 0;
 		$checks   = wpcybersec()->settings ? wpcybersec()->settings->get( 'use_checksums', true ) : true;
 		$map      = ( $checks && 'plugin' === $type && '' !== (string) $slug && '' !== (string) $version && method_exists( $scanner, 'checksum_map' ) ) ? null : false;
 		$scan_ext = array( 'js', 'html', 'htm', 'svg', 'htaccess' );
@@ -936,6 +977,10 @@ class Install_Gate {
 						continue;
 					}
 				}
+				if ( $file_hits && '' !== $installed && self::same_file( $abs, $installed . '/' . $rel ) ) {
+					++$unchanged;
+					continue;
+				}
 				foreach ( $file_hits as $hit ) {
 					if ( ! is_array( $hit ) ) {
 						continue;
@@ -951,7 +996,23 @@ class Install_Gate {
 		} catch ( \Throwable $e ) {
 			$partial = true;
 		}
-		return array( $hits, $partial, $verified );
+		return array( $hits, $partial, $verified, $unchanged );
+	}
+
+	/**
+	 * Whether two files have the same content.
+	 *
+	 * @param string $a File.
+	 * @param string $b File.
+	 * @return bool
+	 */
+	private static function same_file( $a, $b ) {
+		if ( ! @is_file( $b ) || @is_link( $b ) || @filesize( $a ) !== @filesize( $b ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			return false;
+		}
+		$ha = @hash_file( 'sha256', $a ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		$hb = @hash_file( 'sha256', $b ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		return is_string( $ha ) && '' !== $ha && $ha === $hb;
 	}
 
 	/**
@@ -998,9 +1059,12 @@ class Install_Gate {
 	/**
 	 * Where the install was started from.
 	 *
-	 * @return string wporg | upload | url
+	 * @return string wporg | upload | url | cli
 	 */
 	private function install_source() {
+		if ( defined( 'WP_CLI' ) && WP_CLI ) {
+			return 'cli';
+		}
 		// phpcs:disable WordPress.Security.NonceVerification -- read-only, WordPress verifies the install request.
 		$action = isset( $_REQUEST['action'] ) && is_string( $_REQUEST['action'] ) ? sanitize_key( wp_unslash( $_REQUEST['action'] ) ) : '';
 		if ( ! empty( $_FILES ) || in_array( $action, array( 'upload-plugin', 'upload-theme' ), true ) || isset( $_REQUEST['package'] ) ) {

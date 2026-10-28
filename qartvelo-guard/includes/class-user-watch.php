@@ -242,10 +242,20 @@ class User_Watch {
 	/* Real time                                                           */
 	/* ------------------------------------------------------------------ */
 
+	/** @var array<int,bool> Users created in this request (user_register fired). */
+	private $registered_now = array();
+
+	/** @var array<int,bool> Accounts created moments ago that were given the administrator role, waiting for the hook that knows their previous roles. */
+	private $deferred = array();
+
 	/**
 	 * @param int $user_id New user.
 	 */
 	public function on_user_register( $user_id ) {
+		// WP-CLI and some plugins create the account first and give it the
+		// administrator role in a second step of the same request.
+		$this->registered_now[ (int) $user_id ] = true;
+		unset( $this->deferred[ (int) $user_id ] );
 		if ( ! $this->silent && $this->is_admin_user( $user_id ) ) {
 			$this->flag( $user_id, 'registered' );
 		}
@@ -261,8 +271,11 @@ class User_Watch {
 			return;
 		}
 		if ( self::ROLE === $role ) {
+			unset( $this->deferred[ (int) $user_id ] );
 			if ( ! in_array( self::ROLE, (array) $old_roles, true ) ) {
-				$this->flag( $user_id, 'role' );
+				// wp_insert_user() sets the role before user_register fires: an
+				// account that had no role at all is a new registration.
+				$this->flag( $user_id, ( empty( $old_roles ) || ! empty( $this->registered_now[ (int) $user_id ] ) ) ? 'registered' : 'role' );
 			}
 			return;
 		}
@@ -276,9 +289,53 @@ class User_Watch {
 	 * @param string $role    Added role.
 	 */
 	public function on_add_user_role( $user_id, $role ) {
-		if ( ! $this->silent && self::ROLE === $role ) {
-			$this->flag( $user_id, 'role' );
+		if ( $this->silent || self::ROLE !== $role ) {
+			return;
 		}
+		if ( $this->just_registered( $user_id ) ) {
+			// WordPress fires this from set_role() too, before set_user_role and
+			// user_register. For an account created moments ago the next hook
+			// knows the previous roles and decides between "registered" and
+			// "role"; a plain add_role() with no such hook is settled at shutdown.
+			if ( ! $this->deferred ) {
+				add_action( 'shutdown', array( $this, 'flag_deferred' ) );
+			}
+			$this->deferred[ (int) $user_id ] = true;
+			return;
+		}
+		$this->flag( $user_id, 'role' );
+	}
+
+	/**
+	 * Flags the accounts on_add_user_role() left for later when no other hook settled them.
+	 */
+	public function flag_deferred() {
+		$ids            = array_keys( $this->deferred );
+		$this->deferred = array();
+		foreach ( $ids as $id ) {
+			if ( ! $this->silent && $this->is_admin_user( $id ) ) {
+				$this->flag( $id, 'role' );
+			}
+		}
+	}
+
+	/**
+	 * Whether the account was created in this request (user_register fired,
+	 * or its registration time is seconds old).
+	 *
+	 * @param int $user_id User.
+	 * @return bool
+	 */
+	private function just_registered( $user_id ) {
+		if ( ! empty( $this->registered_now[ (int) $user_id ] ) ) {
+			return true;
+		}
+		$user = get_userdata( (int) $user_id );
+		if ( ! $user || empty( $user->user_registered ) ) {
+			return false;
+		}
+		$at = strtotime( (string) $user->user_registered . ' UTC' );
+		return $at && time() - $at < MINUTE_IN_SECONDS;
 	}
 
 	/**

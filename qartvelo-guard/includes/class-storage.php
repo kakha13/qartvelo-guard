@@ -186,6 +186,7 @@ class Storage {
 	public static function reset() {
 		self::$resolved = null;
 		self::$default  = null;
+		Paths::reset(); // Its cached data folder exclusion.
 	}
 
 	/**
@@ -399,7 +400,7 @@ class Storage {
 				'text'  => sprintf( __( '%s is not writable for WordPress, and neither is the uploads folder. Uploads are not held for approval right now (only uploads that look malicious are blocked), held files cannot be kept and scans cannot run.', 'qartvelo-guard' ), $primary ),
 				'fix'   => $const
 					? __( 'Fix: make the folder set by WPCYBERSEC_DATA_DIR in wp-config.php writable for the web server user, or point it to a folder that is.', 'qartvelo-guard' )
-					: $hint . __( 'Fix: make wp-content writable for the web server user (so WordPress can create the wpcybersec folder), or add this line to wp-config.php with a folder outside the web root that the web server user can write:', 'qartvelo-guard' ),
+					: $hint . __( 'Fix: make the uploads folder writable for the web server user (the plugin creates uploads/qartvelo-guard there), or add this line to wp-config.php with a folder outside the web root that the web server user can write:', 'qartvelo-guard' ),
 				'code'  => $const ? '' : $code,
 			);
 		}
@@ -438,8 +439,8 @@ class Storage {
 	 * example uploads/qartvelo-guard/k3v9.../. The deny files written by
 	 * protect() work on Apache, LiteSpeed and IIS; nginx ignores them, so the
 	 * random name keeps every path unguessable there, and both folders hold an
-	 * index.php so they cannot be listed. Inside, held files also have random
-	 * names ending in .bin.
+	 * index.php so they cannot be listed. Inside, held files have random or
+	 * content-hash names ending in .bin.
 	 *
 	 * @return string '' when WordPress cannot report the uploads folder.
 	 */
@@ -993,10 +994,38 @@ class Storage {
 			Fs::delete( $source . '/spool/guard-import.lock' );
 			Fs::rmdir( $source . '/spool' );
 			Fs::rmdir( $source );
+			$this->remove_outer_dir( $source );
 			Network::delete_option( self::MOVE_OPTION );
+			if ( $target === $this->default_dir() ) {
+				// The default folder is found again on every request: pinning
+				// its absolute path would make a copy of the site (another
+				// folder, same database) keep using this folder.
+				Network::delete_option( self::DIR_OPTION );
+				self::reset();
+			}
 			return true;
 		}
 		return false;
+	}
+
+	/**
+	 * After the data left its random folder inside uploads/qartvelo-guard:
+	 * removes the deny files written around it and the folder itself when
+	 * nothing else is there, so a scan does not report them as unknown files.
+	 *
+	 * @param string $source Folder the data was moved out of.
+	 */
+	private function remove_outer_dir( $source ) {
+		$outer = dirname( $source );
+		if ( self::UPLOADS_FOLDER !== basename( $outer ) || ! preg_match( '/^[a-z0-9]{32}$/', basename( $source ) ) || ! @is_dir( $outer ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			return;
+		}
+		foreach ( self::DENY_FILES as $name ) {
+			if ( @is_file( $outer . '/' . $name ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+				Fs::delete( $outer . '/' . $name );
+			}
+		}
+		Fs::rmdir( $outer ); // Only succeeds when the folder is empty now.
 	}
 
 	/**

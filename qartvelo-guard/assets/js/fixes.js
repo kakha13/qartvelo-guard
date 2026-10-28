@@ -44,13 +44,45 @@
 		});
 	}
 
+	/**
+	 * The button's text, wrapped in a .wpcs-btn-label span on first use (in place of the text
+	 * node, so a Dashicon before or after it stays where it is). Only this span is rewritten.
+	 */
+	function labelOf(btn) {
+		var label = btn.querySelector('.wpcs-btn-label');
+		if (label) {
+			return label;
+		}
+		label = document.createElement('span');
+		label.className = 'wpcs-btn-label';
+		var texts = Array.prototype.slice.call(btn.childNodes).filter(function (n) {
+			return n.nodeType === 3 && n.nodeValue.trim() !== '';
+		});
+		if (texts.length) {
+			btn.insertBefore(label, texts[0]);
+			texts.forEach(function (n) {
+				label.appendChild(n);
+			});
+		} else {
+			btn.appendChild(label);
+		}
+		return label;
+	}
+
+	function setLabel(btn, text) {
+		labelOf(btn).textContent = text;
+	}
+
 	function setBusy(btn, busy) {
+		var label = labelOf(btn);
 		if (busy) {
-			btn.dataset.label = btn.textContent;
-			btn.textContent = t.working || 'Fixing...';
+			if (!btn.dataset.label) {
+				btn.dataset.label = label.textContent;
+			}
+			label.textContent = t.working || 'Fixing...';
 			btn.disabled = true;
 		} else {
-			btn.textContent = btn.dataset.label || btn.textContent;
+			label.textContent = btn.dataset.label || label.textContent;
 			btn.disabled = false;
 		}
 	}
@@ -80,7 +112,7 @@
 			setBusy(one, true);
 			WP.ajax('fix', { fix: id })
 				.then(function (res) {
-					one.textContent = t.fixed || 'Fixed';
+					setLabel(one, t.fixed || 'Fixed');
 					var note = res && res.message ? res.message : t.allDone || 'Fixed';
 					WP.toast(note);
 					setTimeout(reloadFresh, note.length > 40 ? 3500 : 900);

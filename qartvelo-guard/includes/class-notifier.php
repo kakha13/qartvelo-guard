@@ -24,6 +24,9 @@ defined( 'ABSPATH' ) || exit;
  */
 class Notifier {
 
+	/** @var string Error of the last send_test() webhook post ('' when accepted or not configured). */
+	private $webhook_error = '';
+
 	const QUEUE_OPTION = 'wpcybersec_notify_queue';
 	const LAST_OPTION  = 'wpcybersec_notify_last';
 	const SCAN_OPTION  = 'wpcybersec_notify_scan';
@@ -112,14 +115,16 @@ class Notifier {
 		if ( 'off' === $mode ) {
 			return;
 		}
-		$threats     = isset( $status['threats'] ) ? (int) $status['threats'] : 0;
+		// Threats that were open before this scan were reported when they
+		// appeared: only new ones (and new held files) are worth another alert.
+		$threats     = self::new_threats( $status );
 		$quarantined = isset( $status['quarantined'] ) ? (int) $status['quarantined'] : 0;
 		$queued      = count( $this->queue() );
 		if ( ! $threats && ! $quarantined && ! $queued ) {
 			return;
 		}
 		$summary = array();
-		foreach ( array( 'mode', 'trigger', 'files_total', 'files_done', 'new', 'modified', 'deleted', 'threats', 'quarantined', 'skipped', 'started_at', 'finished_at', 'database', 'db_findings', 'missing_core', 'new_admins' ) as $key ) {
+		foreach ( array( 'mode', 'trigger', 'files_total', 'files_done', 'new', 'modified', 'deleted', 'threats', 'new_threats', 'quarantined', 'skipped', 'started_at', 'finished_at', 'database', 'db_findings', 'missing_core', 'new_admins' ) as $key ) {
 			$summary[ $key ] = isset( $status[ $key ] ) ? $status[ $key ] : '';
 		}
 		Network::update_option( self::SCAN_OPTION, $summary, false );
@@ -151,10 +156,18 @@ class Notifier {
 		$ok      = $this->mail( $recipients, $subject, $this->body( $lines ) );
 		$webhook = $this->webhook(
 			/* translators: %s: site name */
-			sprintf( __( 'Test message from Qartvelo Guard on %s. Notifications work.', 'qartvelo-guard' ), $this->site_name() )
+			sprintf( __( 'Test message from Qartvelo Guard on %s. Notifications work.', 'qartvelo-guard' ), $this->site_name() ),
+			true
 		);
+		$this->webhook_error = '';
 		if ( false === $webhook ) {
-			$this->log( 'notify_failed', __( 'The webhook URL was not used: it must be an https:// address on the public internet, not this server or its private network.', 'qartvelo-guard' ) );
+			$this->webhook_error = __( 'The webhook URL was not used: it must be an https:// address on the public internet, not this server or its private network.', 'qartvelo-guard' );
+		} elseif ( is_string( $webhook ) ) {
+			/* translators: %s: HTTP status or error message */
+			$this->webhook_error = sprintf( __( 'The webhook did not accept the test message: %s', 'qartvelo-guard' ), $webhook );
+		}
+		if ( '' !== $this->webhook_error ) {
+			$this->log( 'notify_failed', $this->webhook_error );
 		}
 		$this->log(
 			$ok ? 'notify_test' : 'notify_failed',
@@ -296,7 +309,7 @@ class Notifier {
 			}
 		}
 		$scan = is_array( $scan ) ? $scan : array();
-		if ( ! $items && ( ! $scan || ( empty( $scan['threats'] ) && empty( $scan['quarantined'] ) ) ) ) {
+		if ( ! $items && ( ! $scan || ( ! self::new_threats( $scan ) && empty( $scan['quarantined'] ) ) ) ) {
 			$this->release_lock();
 			return false;
 		}
@@ -872,10 +885,35 @@ class Notifier {
 	 * https:// URLs on public hosts are used (no loopback or private addresses),
 	 * because the message carries text an uploader controls (file names, URLs).
 	 *
-	 * @param string $text Message.
-	 * @return bool|null Null without a webhook, false when the URL was refused, true when sent.
+	 * The error of the last send_test() webhook post, '' when it was accepted or not configured.
+	 *
+	 * @return string
 	 */
-	private function webhook( $text ) {
+	public function webhook_error() {
+		return (string) $this->webhook_error;
+	}
+
+	/**
+	 * The threats a scan found that were not open items before it ran
+	 * (older summaries only carry the total).
+	 *
+	 * @param array $status Scan_Job::status() shape or a stored summary.
+	 * @return int
+	 */
+	private static function new_threats( array $status ) {
+		if ( isset( $status['new_threats'] ) && '' !== $status['new_threats'] ) {
+			return (int) $status['new_threats'];
+		}
+		return isset( $status['threats'] ) ? (int) $status['threats'] : 0;
+	}
+
+	/**
+	 * @param string $text Message.
+	 * @param bool   $wait Wait for the answer (the test message): then a
+	 *                     refused post returns its HTTP status or error text.
+	 * @return bool|string|null Null without a webhook, false when the URL was refused, true when sent (or accepted).
+	 */
+	private function webhook( $text, $wait = false ) {
 		$url = (string) wpcybersec()->settings->get( 'webhook_url', '' );
 		if ( '' === $url ) {
 			return null;
@@ -888,18 +926,29 @@ class Notifier {
 		if ( preg_match( '/(^|\.)discord(app)?\.com$/i', $host ) && false === strpos( $url, '/slack' ) ) {
 			$payload = array( 'content' => function_exists( 'mb_substr' ) ? mb_substr( $text, 0, 1900 ) : substr( $text, 0, 1900 ) );
 		}
-		wp_safe_remote_post(
+		$response = wp_safe_remote_post(
 			$url,
 			array(
-				'timeout'            => 3,
-				'blocking'           => false,
+				'timeout'            => $wait ? 6 : 3,
+				'blocking'           => (bool) $wait,
 				'redirection'        => 0,
 				'reject_unsafe_urls' => true,
 				'headers'            => array( 'Content-Type' => 'application/json; charset=utf-8' ),
 				'body'               => wp_json_encode( $payload ),
 			)
 		);
-		return true;
+		if ( ! $wait ) {
+			return true;
+		}
+		if ( is_wp_error( $response ) ) {
+			return $response->get_error_message();
+		}
+		$code = (int) wp_remote_retrieve_response_code( $response );
+		if ( $code >= 200 && $code < 300 ) {
+			return true;
+		}
+		/* translators: %d: HTTP status code */
+		return sprintf( __( 'HTTP %d', 'qartvelo-guard' ), $code );
 	}
 
 	/* ------------------------------------------------------------------ */

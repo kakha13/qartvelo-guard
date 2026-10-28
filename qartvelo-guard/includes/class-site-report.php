@@ -733,7 +733,7 @@ class Site_Report {
 				$user               = get_userdata( $user_id );
 				$names[ $user_id ] = $user ? (string) $user->user_login : '#' . $user_id;
 			}
-			$html .= '<tr><td class="nowrap">' . $this->t( $this->when( (int) strtotime( (string) $row['created_at'] . ' UTC' ) ) ) . '</td><td><code>' . $this->t( (string) $row['event'] ) . '</code></td><td>' . $this->t( (string) $row['message'] ) . '</td><td>' . $this->t( $user_id ? $names[ $user_id ] : __( 'System', 'qartvelo-guard' ) ) . '</td><td>' . $this->t( (string) $row['ip'] ) . '</td></tr>';
+			$html .= '<tr><td class="nowrap">' . $this->t( $this->when( (int) strtotime( (string) $row['created_at'] . ' UTC' ) ) ) . '</td><td><code>' . $this->t( (string) $row['event'] ) . '</code></td><td>' . $this->t( (string) $row['message'] ) . '</td><td>' . $this->t( $user_id ? $names[ $user_id ] : ( \WPCyberSecurity\Admin\Reports_Page::logged_by_cli( (array) $row ) ? 'WP-CLI' : __( 'System', 'qartvelo-guard' ) ) ) . '</td><td>' . $this->t( (string) $row['ip'] ) . '</td></tr>';
 		}
 		return $html . '</tbody></table></section>';
 	}
@@ -842,6 +842,11 @@ class Site_Report {
 		if ( strlen( $this->data_dir ) > 3 ) {
 			$search[]  = $this->data_dir;
 			$replace[] = '[' . __( 'plugin data folder', 'qartvelo-guard' ) . ']';
+			$escaped   = esc_html( $this->data_dir );
+			if ( $escaped !== $this->data_dir ) {
+				$search[]  = $escaped;
+				$replace[] = '[' . __( 'plugin data folder', 'qartvelo-guard' ) . ']';
+			}
 		}
 		return $search ? str_replace( $search, $replace, $html ) : $html;
 	}

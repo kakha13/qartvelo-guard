@@ -102,7 +102,7 @@ class Settings_Page {
 	 * @param string $message Plain text.
 	 * @param string $type    ok | warn | bad | info.
 	 */
-	public static function notice( $message, $type = 'info' ) {
+	public static function notice( $message, $type = 'info', $html = false ) {
 		$icons = array(
 			'ok'   => 'yes-alt',
 			'warn' => 'warning',
@@ -112,7 +112,8 @@ class Settings_Page {
 		$type  = isset( $icons[ $type ] ) ? $type : 'info';
 		$class = 'info' === $type ? 'wpcs-notice' : 'wpcs-notice wpcs-notice--' . $type;
 		$role  = 'bad' === $type ? 'alert' : 'status';
-		echo '<div class="' . esc_attr( $class ) . '" role="' . esc_attr( $role ) . '"><span class="dashicons dashicons-' . esc_attr( $icons[ $type ] ) . '" aria-hidden="true"></span><p>' . esc_html( $message ) . '</p></div>';
+		// $html: the message may carry links (built from escaped parts by the caller).
+		echo '<div class="' . esc_attr( $class ) . '" role="' . esc_attr( $role ) . '"><span class="dashicons dashicons-' . esc_attr( $icons[ $type ] ) . '" aria-hidden="true"></span><p>' . ( $html ? wp_kses( $message, array( 'a' => array( 'href' => true ), 'strong' => array(), 'code' => array() ) ) : esc_html( $message ) ) . '</p></div>';
 	}
 
 	/**
@@ -157,7 +158,7 @@ class Settings_Page {
 	 */
 	public static function commands( $code, $label = '', $help = '', $open = false ) {
 		$html  = '<details class="wpcs-cmds"' . ( $open ? ' open' : '' ) . '>';
-		$html .= '<summary><span class="dashicons dashicons-editor-code" aria-hidden="true"></span><span class="wpcs-cmds__show">' . esc_html__( 'Show commands', 'qartvelo-guard' ) . '</span>';
+		$html .= '<summary><span class="dashicons dashicons-editor-code" aria-hidden="true"></span><span class="wpcs-cmds__show">' . esc_html__( 'Show commands', 'qartvelo-guard' ) . '</span><span class="wpcs-cmds__hide">' . esc_html__( 'Hide commands', 'qartvelo-guard' ) . '</span>';
 		if ( '' !== $label ) {
 			$html .= '<span class="wpcs-cmds__label">' . esc_html( $label ) . '</span>';
 		}
@@ -418,13 +419,15 @@ class Settings_Page {
 			$icon = isset( $meta[ $level ] ) ? $meta[ $level ][0] : 'shield';
 			$desc = isset( $meta[ $level ] ) ? $meta[ $level ][1] : '';
 			$is   = $selected === $level;
+			$id   = 'wpcs-level-' . sanitize_html_class( $level );
 			$html .= '<label class="wpcs-option' . ( $is ? ' is-selected' : '' ) . '">';
-			$html .= '<input type="radio" name="' . esc_attr( $name ) . '" value="' . esc_attr( $level ) . '"' . ( $is ? ' checked' : '' ) . ' data-wpcs-level>';
+			// The radio is named by the title alone, not by the whole card text.
+			$html .= '<input type="radio" name="' . esc_attr( $name ) . '" value="' . esc_attr( $level ) . '"' . ( $is ? ' checked' : '' ) . ' aria-labelledby="' . esc_attr( $id . '-title' ) . '" aria-describedby="' . esc_attr( $id . '-desc' ) . '" data-wpcs-level>';
 			if ( 'balanced' === $level ) {
 				$html .= '<span class="wpcs-badge wpcs-badge--ok wpcs-option__tag">' . esc_html__( 'Recommended', 'qartvelo-guard' ) . '</span>';
 			}
-			$html .= '<span class="wpcs-option__title"><span class="dashicons dashicons-' . esc_attr( $icon ) . '" aria-hidden="true"></span>' . esc_html( isset( $labels['protection_level'][ $level ] ) ? $labels['protection_level'][ $level ] : ucfirst( $level ) ) . '</span>';
-			$html .= '<span class="wpcs-option__desc">' . esc_html( $desc ) . '</span>';
+			$html .= '<span class="wpcs-option__title" id="' . esc_attr( $id . '-title' ) . '"><span class="dashicons dashicons-' . esc_attr( $icon ) . '" aria-hidden="true"></span>' . esc_html( isset( $labels['protection_level'][ $level ] ) ? $labels['protection_level'][ $level ] : ucfirst( $level ) ) . '</span>';
+			$html .= '<span class="wpcs-option__desc" id="' . esc_attr( $id . '-desc' ) . '">' . esc_html( $desc ) . '</span>';
 			$html .= '<ul>';
 			foreach ( self::level_points( $preset ) as $point ) {
 				$html .= '<li>' . esc_html( $point ) . '</li>';
@@ -823,7 +826,12 @@ class Settings_Page {
 		if ( $for ) {
 			echo '<label class="wpcs-field__label" for="' . esc_attr( $for ) . '">' . esc_html( $label ) . '</label>';
 		} else {
-			echo '<div class="wpcs-field__label">' . esc_html( $label ) . '</div>';
+			// A radio group or check grid is named by this heading.
+			$id = 'wpcs-label-' . substr( md5( (string) $label ), 0, 8 );
+			echo '<div class="wpcs-field__label" id="' . esc_attr( $id ) . '">' . esc_html( $label ) . '</div>';
+			if ( false !== strpos( (string) $content, 'role="radiogroup"' ) && false === strpos( (string) $content, 'aria-labelledby=' ) ) {
+				$content = preg_replace( '/role="radiogroup"/', 'role="radiogroup" aria-labelledby="' . esc_attr( $id ) . '"', (string) $content, 1 );
+			}
 		}
 		echo '<div class="wpcs-field__control">' . $content; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built from escaped parts.
 		if ( '' !== $help ) {
@@ -905,7 +913,7 @@ class Settings_Page {
 
 		$this->form_open( 'general' );
 
-		$this->card_open( 'wpcs-level', 'shield', __( 'Protection level', 'qartvelo-guard' ), __( 'Pick a starting point. The settings below follow the level you pick; changing one of them makes the level Custom.', 'qartvelo-guard' ) );
+		$this->card_open( 'wpcs-level', 'shield', __( 'Protection level', 'qartvelo-guard' ), __( 'Pick a starting point. The upload, install, file and scan settings below follow the level you pick; changing one of them makes the level Custom. Alerts are chosen separately.', 'qartvelo-guard' ) );
 		if ( 'custom' === $s['protection_level'] ) {
 			self::notice( __( 'Custom: your settings do not match a preset. Pick a level to reset the settings below to its values.', 'qartvelo-guard' ), 'info' );
 		}
@@ -1502,7 +1510,7 @@ class Settings_Page {
 			echo '<h3 class="wpcs-subhead">' . esc_html__( 'Server script (cgav)', 'qartvelo-guard' ) . '</h3>';
 			echo '<p class="wpcs-muted">' . esc_html__( 'One script for root that installs and checks ClamAV and Linux Malware Detect. Every section prints the status before and after, and is safe to run again; nothing deletes or moves site files.', 'qartvelo-guard' ) . '</p>';
 			echo '<p class="wpcs-row"><a class="button" href="' . esc_url( $this->action_url( 'cgav' ) ) . '"><span class="dashicons dashicons-download" aria-hidden="true"></span>' . esc_html__( 'Download server script (cgav)', 'qartvelo-guard' ) . '</a></p>';
-			echo '<details class="wpcs-cmds"><summary><span class="dashicons dashicons-editor-code" aria-hidden="true"></span><span class="wpcs-cmds__show">' . esc_html__( 'Show commands', 'qartvelo-guard' ) . '</span><span class="wpcs-cmds__label">' . esc_html__( 'Install everything in one paste (as root)', 'qartvelo-guard' ) . '</span></summary><div class="wpcs-cmds__body">';
+			echo '<details class="wpcs-cmds"><summary><span class="dashicons dashicons-editor-code" aria-hidden="true"></span><span class="wpcs-cmds__show">' . esc_html__( 'Show commands', 'qartvelo-guard' ) . '</span><span class="wpcs-cmds__hide">' . esc_html__( 'Hide commands', 'qartvelo-guard' ) . '</span><span class="wpcs-cmds__label">' . esc_html__( 'Install everything in one paste (as root)', 'qartvelo-guard' ) . '</span></summary><div class="wpcs-cmds__body">';
 			echo '<p class="wpcs-sub">' . esc_html__( 'Paste the whole block into an SSH session as root. It saves the script, installs the cgav command and adds this site to the maldet monitor. On a server with more sites, paste the block of each site, or run cgav add-site for each: the engines are installed only once.', 'qartvelo-guard' ) . '</p>';
 			echo self::code( $block ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
 			echo '</div></details>';
@@ -1528,7 +1536,7 @@ class Settings_Page {
 			self::notice( __( 'maldet is installed, but its real-time monitor is unavailable: install inotify-tools (step 1 below).', 'qartvelo-guard' ), 'warn' );
 		}
 		echo '<p class="wpcs-muted">' . esc_html__( 'Watch this site in real time, start the monitor on every boot, and scan recently changed files in the background. Run as root.', 'qartvelo-guard' ) . '</p>';
-		echo '<details class="wpcs-cmds"' . ( $no_monitor ? ' open' : '' ) . '><summary><span class="dashicons dashicons-editor-code" aria-hidden="true"></span><span class="wpcs-cmds__show">' . esc_html__( 'Show commands', 'qartvelo-guard' ) . '</span><span class="wpcs-cmds__label">' . esc_html__( 'Real-time monitor and scans', 'qartvelo-guard' ) . '</span></summary><div class="wpcs-cmds__body">';
+		echo '<details class="wpcs-cmds"' . ( $no_monitor ? ' open' : '' ) . '><summary><span class="dashicons dashicons-editor-code" aria-hidden="true"></span><span class="wpcs-cmds__show">' . esc_html__( 'Show commands', 'qartvelo-guard' ) . '</span><span class="wpcs-cmds__hide">' . esc_html__( 'Hide commands', 'qartvelo-guard' ) . '</span><span class="wpcs-cmds__label">' . esc_html__( 'Real-time monitor and scans', 'qartvelo-guard' ) . '</span></summary><div class="wpcs-cmds__body">';
 		self::render_steps( $tools->maldet_steps() );
 		echo '</div></details>';
 		$this->card_close();
@@ -1653,10 +1661,19 @@ class Settings_Page {
 			// Where this hosting panel lets PHP use a folder outside the web root (open_basedir).
 			self::render_panel_steps( 'data_dir' );
 			$snippet = $tools->data_dir_snippet();
+			// The one-click move (the same button as on the Server health tab and in the wizard) comes first.
+			$fix = '';
+			if ( Admin::call( 'hardening', 'descriptor', array( 'data_dir' ), null ) ) {
+				ob_start();
+				Admin::call( 'hardening', 'render_fix', array( 'data_dir' ), null );
+				$fix = (string) ob_get_clean();
+			}
 			$this->field(
 				__( 'Move it outside the web root', 'qartvelo-guard' ),
-				self::commands( $snippet['shell'], __( 'Shell (as root)', 'qartvelo-guard' ), '', true ) . self::code( $snippet['config'], 'wp-config.php' ),
-				__( 'Run the commands, then add the line to wp-config.php above "That\'s all, stop editing!". The plugin switches to the new folder on the next page load.', 'qartvelo-guard' )
+				$fix . self::commands( $snippet['shell'], __( 'Shell (as root)', 'qartvelo-guard' ), '', '' === $fix ) . self::code( $snippet['config'], 'wp-config.php' ),
+				'' === $fix
+					? __( 'Run the commands, then add the line to wp-config.php above "That\'s all, stop editing!". The plugin switches to the new folder on the next page load.', 'qartvelo-guard' )
+					: __( 'By hand instead: run the commands, then add the line to wp-config.php above "That\'s all, stop editing!". The plugin switches to the new folder on the next page load.', 'qartvelo-guard' )
 			);
 		}
 		$this->card_close();
@@ -1868,9 +1885,15 @@ class Settings_Page {
 		$this->field(
 			__( 'Not checked by the guard', 'qartvelo-guard' ),
 			$this->textarea( 'guard_exempt', (array) $s['guard_exempt'], 5 ),
-			__( 'One per line. A line ending in .php skips uploads to that script (the path of the running PHP file ends with it). A line with = (key=value) skips requests to WordPress\'s index.php whose GET or POST value of key is exactly value or starts with value/. Any other line is a route: it skips requests to WordPress\'s index.php whose URL path is the site path plus that route, with or without /index.php in between (or a route below it), unless a rest_route parameter is sent too. Lines for WordPress\'s own endpoints (scripts in /wp-admin/ and routes of the wp/v2 namespace) only skip requests that carry a login cookie or an Authorization header. WordPress media uploads are already checked by the plugin itself, so they are listed here by default.', 'qartvelo-guard' ),
+			__( 'One per line. The default lines are WordPress\'s own media uploads, which the plugin already checks after WordPress has loaded.', 'qartvelo-guard' ),
 			'wpcs-guard-exempt'
 		);
+		echo '<details class="wpcs-help-more"><summary>' . esc_html__( 'How a line is matched', 'qartvelo-guard' ) . '</summary><ul>'
+			. '<li>' . esc_html__( 'A line ending in .php skips uploads to that script (the path of the running PHP file ends with it).', 'qartvelo-guard' ) . '</li>'
+			. '<li>' . esc_html__( 'A line with = (key=value) skips requests to WordPress\'s index.php whose GET or POST value of key is exactly value or starts with value/.', 'qartvelo-guard' ) . '</li>'
+			. '<li>' . esc_html__( 'Any other line is a route: it skips requests to WordPress\'s index.php whose URL path is the site path plus that route, with or without /index.php in between (or a route below it), unless a rest_route parameter is sent too.', 'qartvelo-guard' ) . '</li>'
+			. '<li>' . esc_html__( 'Lines for WordPress\'s own endpoints (scripts in /wp-admin/ and routes of the wp/v2 namespace) only skip requests that carry a login cookie or an Authorization header.', 'qartvelo-guard' ) . '</li>'
+			. '</ul></details>';
 
 		$snippets = Sysadmin_Tools::call( 'guard_manager', 'snippets', array(), array() );
 		if ( is_array( $snippets ) && $snippets ) {
@@ -2109,8 +2132,12 @@ class Settings_Page {
 		} elseif ( false === $state ) {
 			self::notice( __( 'The allowlist was changed outside the plugin. Review Reports > Allowlist and remove entries you did not add.', 'qartvelo-guard' ), 'bad' );
 		} else {
-			self::notice( __( 'Off. Add a secret key to wp-config.php to turn it on.', 'qartvelo-guard' ), 'info' );
-			echo self::code( $tools->hmac_snippet(), 'wp-config.php', __( 'This key was generated just now. Keep it only in wp-config.php.', 'qartvelo-guard' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+			self::notice( __( 'Off. A secret key in wp-config.php turns it on.', 'qartvelo-guard' ), 'info' );
+			if ( Admin::call( 'hardening', 'descriptor', array( 'hmac_key' ), null ) ) {
+				Admin::call( 'hardening', 'render_fix', array( 'hmac_key' ), null ); // "Add the key for me", with the by-hand steps, as in the wizard.
+			} else {
+				echo self::code( $tools->hmac_snippet(), 'wp-config.php', __( 'This key was generated just now. Keep it only in wp-config.php.', 'qartvelo-guard' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+			}
 		}
 		$this->card_close();
 	}

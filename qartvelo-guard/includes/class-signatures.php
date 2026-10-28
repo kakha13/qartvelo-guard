@@ -75,6 +75,12 @@ class Signatures {
 	/** @var array|null */
 	private static $path_cache = null;
 
+	/** @var string|null The content comment_ranges() was last built for (compared by identity, so no copy is made). */
+	private static $ranges_for = null;
+
+	/** @var array|null Sorted [start, end] byte ranges of that content's comments; null when the tokenizer could not be used. */
+	private static $ranges = null;
+
 	/**
 	 * Extensions treated as PHP source.
 	 *
@@ -187,9 +193,10 @@ class Signatures {
 			return self::$cache;
 		}
 
-		// Shared fragments.
-		$req      = '\$_(?:GET|POST|REQUEST|COOKIE|SERVER\s*\[\s*["\x27]HTTP_)';
-		$req_core = '\$_(?:GET|POST|REQUEST|COOKIE)';
+		// Shared fragments. Request input is also read through $GLOBALS['_POST'].
+		$glob     = '\$GLOBALS\s*\[\s*["\x27]_(?:GET|POST|REQUEST|COOKIE)["\x27]\s*\]';
+		$req      = '(?:\$_(?:GET|POST|REQUEST|COOKIE|SERVER\s*\[\s*["\x27]HTTP_)|' . $glob . ')';
+		$req_core = '(?:\$_(?:GET|POST|REQUEST|COOKIE)|' . $glob . ')';
 		$decoders = 'base64_decode|gzinflate|gzuncompress|gzdecode|str_rot13|strrev|rawurldecode|urldecode|hex2bin|convert_uudecode|bzdecompress|lzf_decompress';
 		$wrap     = '(?:@\s*)?(?:\x5c?[a-z_][a-z0-9_]*\s*\(\s*(?:@\s*)?){0,3}';
 		$not_obj  = '(?<![\w$\x5c])(?<!->)(?<!::)';
@@ -215,7 +222,7 @@ class Signatures {
 				'title'    => __( 'Executes commands or code sent in the request (web shell)', 'qartvelo-guard' ),
 				'severity' => 3,
 				'targets'  => 'php',
-				'needle'   => array( '$_' ),
+				'needle'   => array( '$_', '$globals' ),
 				'pattern'  => '~' . $not_obj . '(?:' . $sinks . ')\s*\(\s*(?:' . $wrap . $req . '|["\x27][^"\x27\n;]{0,80}["\x27]\s*\.\s*' . $wrap . $req . ')~i',
 				'unless'   => '~escapeshellarg\s*\(~i',
 				'skip_comments' => true,
@@ -234,8 +241,35 @@ class Signatures {
 				'title'    => __( 'Calls a function whose name comes from the request', 'qartvelo-guard' ),
 				'severity' => 3,
 				'targets'  => 'php',
-				'needle'   => array( '$_' ),
+				'needle'   => array( '$_', '$globals' ),
 				'pattern'  => '~(?<!["\x27{])\$_(?:GET|POST|REQUEST|COOKIE|SERVER)\s*\[\s*[^\]\n]{1,40}\]\s*\(\s*[^)\s]~i',
+				'skip_comments' => true,
+			),
+			array(
+				'id'       => 'php_callback_request',
+				'title'    => __( 'Calls a function named by the request through a callback (web shell)', 'qartvelo-guard' ),
+				'severity' => 3,
+				'targets'  => 'php',
+				'needle'   => array( '$_', '$globals' ),
+				'pattern'  => '~\b(?:call_user_func(?:_array)?|array_map|register_shutdown_function|register_tick_function|ob_start|forward_static_call(?:_array)?|set_error_handler|set_exception_handler|spl_autoload_register)\s*+\(\s*+(?:@\s*+)?' . $req_core . '\s*+\[~i',
+				'skip_comments' => true,
+			),
+			array(
+				'id'       => 'php_callback_request_arg',
+				'title'    => __( 'Passes a request value as the callback of an array or sort function (web shell)', 'qartvelo-guard' ),
+				'severity' => 3,
+				'targets'  => 'php',
+				'needle'   => array( '$_', '$globals' ),
+				'pattern'  => '~\b(?:array_filter|array_walk(?:_recursive)?|usort|uasort|uksort|array_reduce|iterator_apply|preg_replace_callback)\s*+\(\s*+[^,;\n()]{1,80}(?:\([^()\n]{0,80}\))?\s*+,\s*+(?:@\s*+)?' . $req_core . '\s*+\[~i',
+				'skip_comments' => true,
+			),
+			array(
+				'id'       => 'php_superglobal_copy_exec',
+				'title'    => __( 'Copies a request array and executes a value from it (web shell)', 'qartvelo-guard' ),
+				'severity' => 3,
+				'targets'  => 'php',
+				'needle'   => array( '$_', '$globals' ),
+				'pattern'  => '~\$(\w+)\s*+=\s*+(?:@\s*+)?' . $req_core . '\s*+;(?:[^\n]{0,200}+\n){0,4}?[^\n]{0,200}?(?<![\w$\x5c])(?<!->)(?<!::)(?:' . $sinks . ')\s*+\(\s*+(?:@\s*+)?(?:' . $wrap . ')?\$\1\s*+\[~i',
 				'skip_comments' => true,
 			),
 			array(
@@ -243,7 +277,7 @@ class Signatures {
 				'title'    => __( 'Stores a request value and calls it as a function', 'qartvelo-guard' ),
 				'severity' => 3,
 				'targets'  => 'php',
-				'needle'   => array( '$_' ),
+				'needle'   => array( '$_', '$globals' ),
 				'pattern'  => '~\$(\w+)\s*+=\s*+(?:@\s*+)?(?:trim\s*+\(\s*+|stripslashes\s*+\(\s*+)?' . $req_core . '\s*+\[[^\]\n]{1,40}\]\s*+(?:\)\s*+)?;(?:[^\n]{0,200}+\n){0,4}?[^\n]{0,200}?(?<![\w>:$])\$\1\s*\(~i',
 				'skip_comments' => true,
 			),
@@ -1205,6 +1239,50 @@ class Signatures {
 	}
 
 	/**
+	 * Byte ranges of the comments in PHP content, from the tokenizer. The
+	 * line heuristic below cannot tell a "/*" inside a string from a comment
+	 * opener, so code after such a string could be skipped as a comment.
+	 * Built once per content (the last one is kept), null when there is no
+	 * PHP open tag, the content is very large or ext/tokenizer is missing.
+	 *
+	 * @param string $content Content.
+	 * @return array|null
+	 */
+	private static function comment_ranges( $content ) {
+		if ( null !== self::$ranges_for && $content === self::$ranges_for ) {
+			return self::$ranges;
+		}
+		self::$ranges_for = $content;
+		self::$ranges     = null;
+		if ( ! function_exists( 'token_get_all' ) || strlen( $content ) > 2097152 || false === strpos( $content, '<?' ) ) {
+			return null;
+		}
+		try {
+			$tokens = @token_get_all( $content ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		} catch ( \Throwable $e ) {
+			return null;
+		}
+		if ( ! is_array( $tokens ) ) {
+			return null;
+		}
+		$ranges = array();
+		$pos    = 0;
+		foreach ( $tokens as $token ) {
+			if ( is_array( $token ) ) {
+				$len = strlen( (string) $token[1] );
+				if ( T_COMMENT === $token[0] || T_DOC_COMMENT === $token[0] ) {
+					$ranges[] = array( $pos, $pos + $len );
+				}
+				$pos += $len;
+			} else {
+				$pos += strlen( (string) $token );
+			}
+		}
+		self::$ranges = $ranges;
+		return $ranges;
+	}
+
+	/**
 	 * True when the match sits on a line that is a PHP comment ("// ...", "# ..."
 	 * or a docblock line "* ..."). Lines that also close a comment or leave PHP
 	 * mode are not treated as comments, so "*" + "/ eval(...)" still counts.
@@ -1214,6 +1292,19 @@ class Signatures {
 	 * @return bool
 	 */
 	private static function in_comment_line( $content, $offset ) {
+		$ranges = self::comment_ranges( $content );
+		if ( null !== $ranges ) {
+			// The tokenizer knows exactly where the comments are.
+			foreach ( $ranges as $range ) {
+				if ( $range[0] > $offset ) {
+					break;
+				}
+				if ( $offset < $range[1] ) {
+					return true;
+				}
+			}
+			return false;
+		}
 		$total = strlen( $content );
 		$start = 0;
 		if ( $offset > 0 ) {

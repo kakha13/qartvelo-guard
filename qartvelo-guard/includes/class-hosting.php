@@ -806,7 +806,12 @@ class Hosting {
 	public function label( $info = null ) {
 		$info  = is_array( $info ) ? $info : $this->current();
 		$parts = array_filter( array( (string) $info['web_server_name'], (string) $info['php_handler_name'] ) );
-		return $info['name'] . ( $parts ? ' (' . implode( ', ', $parts ) . ')' : '' );
+		$name  = (string) $info['name'];
+		if ( $parts && ')' === substr( $name, -1 ) ) {
+			// "Homebrew (macOS)" + "built-in server" reads "Homebrew (macOS, built-in server)".
+			return substr( $name, 0, -1 ) . ', ' . implode( ', ', $parts ) . ')';
+		}
+		return $name . ( $parts ? ' (' . implode( ', ', $parts ) . ')' : '' );
 	}
 
 	/**

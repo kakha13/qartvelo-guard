@@ -213,6 +213,9 @@ class Guard_Manager {
 				break;
 			}
 		}
+		// A bootstrap that still names an old plugin folder loads nothing: cron
+		// requests repair it too, not only wp-admin page views.
+		$this->heal_bootstrap();
 		if ( ! is_file( Guard_Config::allow_file() ) ) {
 			wpcybersec()->allowlist->export_guard_file();
 		}
@@ -689,7 +692,13 @@ class Guard_Manager {
 			return true;
 		}
 		$data = dirname( dirname( $config ) );
-		if ( 'config.php' !== basename( $config ) || 'guard' !== basename( dirname( $config ) ) || ! preg_match( '/^wpcybersec(?:$|-)/', basename( $data ) ) ) {
+		// Every data folder this plugin creates: wp-content/wpcybersec (before
+		// 1.1.0), uploads/qartvelo-guard and its fallback uploads/qartvelo-guard-<random>
+		// (1.1.0), uploads/qartvelo-guard/<random 32> (1.1.1 and later).
+		$name = basename( $data );
+		$own  = preg_match( '/^wpcybersec(?:$|-)/', $name ) || preg_match( '/^' . preg_quote( Storage::UPLOADS_FOLDER, '/' ) . '(?:$|-)/', $name )
+			|| ( preg_match( '/^[a-z0-9]{32}$/', $name ) && Storage::UPLOADS_FOLDER === basename( dirname( $data ) ) );
+		if ( 'config.php' !== basename( $config ) || 'guard' !== basename( dirname( $config ) ) || ! $own ) {
 			return false;
 		}
 		if ( ! Storage::path_allowed( $config ) ) {
@@ -880,7 +889,7 @@ class Guard_Manager {
 	/**
 	 * Rewrites the bootstrap when the plugin moved or the file was damaged.
 	 */
-	private function heal_bootstrap() {
+	public function heal_bootstrap() {
 		$path = $this->bootstrap_path();
 		if ( ! is_file( $path ) ) {
 			return; // Not created yet or removed on purpose; install() recreates it.

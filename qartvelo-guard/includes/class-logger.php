@@ -21,6 +21,9 @@ class Logger {
 	 * @return int Log id.
 	 */
 	public function log( $event, $message, array $context = array() ) {
+		if ( defined( 'WP_CLI' ) && WP_CLI && ! isset( $context['actor'] ) ) {
+			$context['actor'] = 'wp-cli'; // No WordPress user: the Activity tab says who it was.
+		}
 		return wpcybersec()->store->log_insert( $event, $message, $context );
 	}
 }

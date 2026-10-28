@@ -231,6 +231,10 @@ class Ajax {
 		$action = $this->param( 'do' );
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in guard().
 		$ids    = isset( $_POST['ids'] ) ? array_map( 'intval', (array) wp_unslash( $_POST['ids'] ) ) : array();
+		if ( count( $ids ) > Admin\Admin::MAX_BULK ) {
+			/* translators: %s: number of items */
+			wp_send_json_error( array( 'message' => sprintf( __( 'Select at most %s items at a time.', 'qartvelo-guard' ), number_format_i18n( Admin\Admin::MAX_BULK ) ) ) );
+		}
 		$this->require_risk_confirm( $action, $ids );
 		$result = wpcybersec()->decisions->bulk( $action, $ids );
 		$result['counts'] = wpcybersec()->store->counts();

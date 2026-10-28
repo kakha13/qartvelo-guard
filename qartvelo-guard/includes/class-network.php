@@ -155,6 +155,61 @@ class Network {
 	}
 
 	/**
+	 * Reads several of the plugin's non-autoloaded options into the request
+	 * cache with one query (a page that shows many small states, like the
+	 * dashboard, would otherwise pay one query per option). Multisite reads
+	 * them as network options.
+	 *
+	 * @param string[] $names Option names.
+	 */
+	public static function prime_options( array $names ) {
+		$names = array_values( array_unique( array_filter( array_map( 'strval', $names ) ) ) );
+		if ( ! $names || ! function_exists( 'wp_cache_get' ) || ( function_exists( 'wp_installing' ) && wp_installing() ) ) {
+			return;
+		}
+		if ( self::active() ) {
+			self::prime_network( $names );
+			return;
+		}
+		if ( function_exists( 'wp_prime_option_caches' ) ) {
+			wp_prime_option_caches( $names ); // WordPress 6.4+.
+			return;
+		}
+		if ( wp_using_ext_object_cache() ) {
+			return;
+		}
+		global $wpdb;
+		$notoptions = wp_cache_get( 'notoptions', 'options' );
+		$notoptions = is_array( $notoptions ) ? $notoptions : array();
+		$todo       = array();
+		foreach ( $names as $name ) {
+			if ( ! isset( $notoptions[ $name ] ) && false === wp_cache_get( $name, 'options' ) ) {
+				$todo[] = $name;
+			}
+		}
+		if ( ! $todo ) {
+			return;
+		}
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- core options table, one placeholder per name.
+		$rows  = (array) $wpdb->get_results( $wpdb->prepare( "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name IN (" . implode( ',', array_fill( 0, count( $todo ), '%s' ) ) . ')', $todo ) );
+		$found = array();
+		foreach ( $rows as $row ) {
+			$found[ (string) $row->option_name ] = true;
+			wp_cache_set( (string) $row->option_name, (string) $row->option_value, 'options' ); // Raw, as get_option() caches it.
+		}
+		$changed = false;
+		foreach ( $todo as $name ) {
+			if ( ! isset( $found[ $name ] ) ) {
+				$notoptions[ $name ] = true;
+				$changed             = true;
+			}
+		}
+		if ( $changed ) {
+			wp_cache_set( 'notoptions', $notoptions, 'options' );
+		}
+	}
+
+	/**
 	 * Multisite: reads network options into the request cache in one query.
 	 *
 	 * @param string[] $names Option names.

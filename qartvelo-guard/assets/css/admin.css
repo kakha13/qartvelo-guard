@@ -508,7 +508,7 @@
 }
 .wpcs-tabs .wpcs-count.wpcs-count--zero {
 	background: var(--wpcs-line);
-	color: var(--wpcs-muted);
+	color: var(--wpcs-ink-2);
 }
 
 /* ---------- Reports: toolbar ---------- */
@@ -799,8 +799,10 @@
 	border-top: 0;
 	background: #fbfcfe;
 }
-.no-js .wpcs-items tr.wpcs-details-row[hidden] {
-	display: table-row;
+/* Without JavaScript nothing can open a details row, so it is shown. Scoped under .wpcs-wrap and
+   marked !important to beat the generic ".wpcs-wrap [hidden]" rule in base.css. */
+.no-js .wpcs-wrap .wpcs-items tr.wpcs-details-row[hidden] {
+	display: table-row !important;
 }
 .wpcs-items .wpcs-details {
 	margin: 0;
@@ -1571,8 +1573,22 @@
 	.wpcs-wrap .wpcs-items tr.wpcs-item > .column-actions {
 		padding-bottom: 12px;
 	}
+	/* The table head is gone: a labelled cell repeats its column name above the value. */
+	.wpcs-wrap .wpcs-items tr.wpcs-item > td[data-label]::before {
+		content: attr(data-label);
+		display: block;
+		margin-bottom: 2px;
+		font-size: 11px;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--wpcs-muted);
+	}
 	.wpcs-items tr.wpcs-details-row:not([hidden]) {
 		display: block;
+	}
+	.no-js .wpcs-wrap .wpcs-items tr.wpcs-details-row[hidden] {
+		display: block !important;
 	}
 	.wpcs-wrap .wpcs-items tr.wpcs-details-row > td {
 		display: block;

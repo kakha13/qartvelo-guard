@@ -96,7 +96,11 @@ Static helpers: `Paths` (core), `Fs` (core), `Guard_Config` (core), `Installer` 
   one wins: `WPCYBERSEC_DATA_DIR`, a fallback folder already in use (option
   `wpcybersec_data_fallback`; it keeps being used until its data is moved, so held items stay
   reachable), the folder of the one-click move (option `wpcybersec_data_dir`, single sites
-  only), `wp-content/wpcybersec`, else a new fallback `<main site uploads>/wpcybersec-<random>`.
+  only), the pre-1.1.0 `wp-content/wpcybersec` while it still exists (`legacy_dir()`, only read;
+  `Hardening::move_legacy_data_dir()` moves it away), else the default
+  `<main site uploads>/qartvelo-guard/<random 32 chars>` (`default_dir()`, the folder name is kept
+  in option `wpcybersec_data_token`), with a new fallback `<main site uploads>/qartvelo-guard-<random 16>`
+  when the default cannot be used.
   `status()` / `available()`: `{ state ok|fallback|unavailable, dir, primary, source
   constant|moved|default|fallback, primary_ok }`. `check()` (activation, settings and plugin
   pages) re-resolves, stores option `wpcybersec_storage_status` and logs a change;
@@ -635,14 +639,14 @@ unlink the tmp file, and either answer `403` with the message (`block`) or strip
 Files: `includes/admin/class-admin.php`, `includes/admin/class-dashboard-page.php`,
 `includes/admin/class-reports-page.php`, `assets/css/admin.css`, `assets/js/admin.js`.
 
-- `Admin\Admin::register()`: menu `Cyber Security` (dashicons-shield, position 80, capability
+- `Admin\Admin::register()`: menu `Qartvelo Guard` (dashicons-shield, position 80, capability
   `Admin::cap()`, count bubble = pending + threats; on `network_admin_menu` on multisite), submenus Dashboard (`wpcybersec`),
   Reports (`wpcybersec-reports`), Settings (`wpcybersec-settings`, rendered by
   `Admin\Settings_Page`), Setup Wizard (`wpcybersec-wizard`, rendered by `Admin\Wizard`).
   Registers `Admin\Assets` on `admin_enqueue_scripts` and enqueues base + page assets only on
   plugin pages. Activation redirect: if option `Installer::REDIRECT_OPTION` is set and the wizard
   is not completed, delete it and redirect to the wizard (skip on bulk activation, network
-  admin, AJAX). Admin bar node "Cyber Security (N)" for admins when N pending. Admin notice on
+  admin, AJAX). Admin bar node "Qartvelo Guard (N)" for admins when N pending. Admin notice on
   other screens when the wizard is not completed. "Settings" and "Setup" action links on the
   plugins screen. admin-post handlers: `wpcybersec_download` (stream held file),
   `wpcybersec_allowlist_remove`, `wpcybersec_report` (download report), `wpcybersec_recent_report`.
@@ -905,8 +909,8 @@ Alerts step and the "Usage statistics" card of Settings > General), endpoint and
   site's option before migration) it also: loads the plugin and removes only the define lines it
   marked (`Config_Editor::remove_marked_constant()` for `WPCYBERSEC_HMAC_KEY` and
   `DISABLE_WP_CRON`, never a hand-written one, never when wp-config.php does not parse); removes
-  the guard lines (`; BEGIN/END Qartvelo Guard Guard` block and the `auto_prepend_file` line)
-  from .user.ini and the `# BEGIN/END Qartvelo Guard Guard` block from .htaccess, in ABSPATH
+  the guard lines (`; BEGIN/END Qartvelo Guard early guard` block and the `auto_prepend_file` line)
+  from .user.ini and the `# BEGIN/END Qartvelo Guard early guard` block from .htaccess, in ABSPATH
   and the front controller folder; removes the `# BEGIN/END Qartvelo Guard` block from the
   (main site's) uploads .htaccess (deleting the file when nothing else was in it); drops the
   tables, deletes options, transients and site transients (`_site_transient_wpcybersec_*` and

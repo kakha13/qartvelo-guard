@@ -4,7 +4,7 @@ Tags: security, malware scanner, file integrity, upload, quarantine
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.1.1
+Stable tag: 1.1.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -25,7 +25,7 @@ Qartvelo Guard works like a door that only opens for files you know. Every new u
 * **Full site malware scan.** WordPress core, plugins, themes, uploads and the web root. Core files and plugins from WordPress.org are compared with their official checksums, so original files are never reported.
 * **What changed.** A line by line diff of a modified file against the last approved version or the official original, with every malware match linked to its line. Passwords, keys and salts are masked.
 * **Database scan.** Options, posts and the storage of header and footer script plugins (WPCode, Header Footer Code Manager, Code Snippets) are checked for injected scripts.
-* **Administrator watch.** Every new administrator account, including one inserted straight into the database, is reported at once and waits for your review. Deny removes the role and signs the account out.
+* **Administrator watch.** Every new administrator account is reported and waits for your review: at once when it is created through WordPress, and at the next scan when it was inserted straight into the database. Deny removes the role and signs the account out.
 * **Recent changes.** A site that was already infected when the baseline was recorded looks normal to a scan. Reports > Recent changes lists every PHP, script and configuration file modified in the last 7, 14 or 30 days and says what explains each change: an update, an official checksum, or nothing.
 * **Clean core reinstall.** When WordPress core looks damaged, one button downloads the official package of your version from WordPress.org, checks every file against the official checksums, swaps wp-admin, wp-includes and the root core files in a few seconds with maintenance mode on, and puts the old core back by itself if the site stops answering. Step by step instructions are offered for doing it by hand.
 
@@ -61,7 +61,7 @@ Yes. Everything except the optional server tools works from the WordPress admin.
 
 = Will it block my own uploads? =
 
-With the Balanced or Strict level every upload waits for approval, including yours. Choose Relaxed, "Hold only risky uploads", or turn off "Hold administrators' own uploads too" to let clean uploads through.
+With the Balanced or Strict level every upload waits for approval, including yours. To let clean uploads through, choose Relaxed, or in Settings > General set "When a file is uploaded" to "Hold risky uploads", or tick Administrator under "Clean uploads pass for" (the setup wizard calls these "Hold only risky uploads" and the "Hold administrators' own uploads too" switch).
 
 = What happens when I update a plugin or WordPress? =
 
@@ -93,7 +93,7 @@ Only if you opt in. The setup wizard (Alerts step) and Settings > General offer 
 
 = Where are held files kept? =
 
-In a private folder inside the uploads folder: wp-content/uploads/qartvelo-guard/ followed by a random 32 character folder name, so no file in it has a guessable address. Apache, LiteSpeed and IIS also refuse web access through the deny files the plugin writes; nginx ignores those files, so there the random folder name keeps the data private, both folders contain an index.php against folder listings, and Settings > Advanced shows an nginx rule plus a one-click move of the folder outside the web root. Held files inside have random names ending in .bin and cannot run as code. Sites upgraded from a version before 1.1.0 keep their old folder until the plugin moves it on its own admin pages.
+In a private folder inside the uploads folder: wp-content/uploads/qartvelo-guard/ followed by a random 32 character folder name, so no file in it has a guessable address. Apache, LiteSpeed and IIS also refuse web access through the deny files the plugin writes; nginx ignores those files, so there the random folder name keeps the data private, both folders contain an index.php against folder listings, and Settings > Advanced shows an nginx rule plus a one-click move of the folder outside the web root. Held files inside have random or content-hash names ending in .bin and cannot run as code. Sites upgraded from a version before 1.1.0 keep their old folder until the plugin moves it on its own admin pages.
 
 == External services ==
 
@@ -125,6 +125,15 @@ Data kept on your site: for every held file the plugin records the uploading use
 8. Recent changes: every recently modified code file and what explains the change.
 
 == Changelog ==
+
+= 1.1.2 =
+* Reinstalling an installed plugin or theme from a ZIP (including a new version of Qartvelo Guard itself) counts as an update, so it is no longer held as a new install.
+* The scanner recognises callback web shells and request input read through $GLOBALS, and no longer skips code that follows a string containing /*.
+* Files in a folder that was unreadable during one scan are no longer reported as new on the next scan.
+* Scan alerts repeat only for new threats.
+* Clearer Reports actions: Deny asks before deleting a held copy, trusting a new administrator asks first, critical files explain when no official copy exists.
+* Accessibility: labelled radio groups, visible keyboard focus on protection cards, column labels in the narrow layout, reduced motion and high contrast support.
+* Many smaller fixes to WP-CLI, the dashboard, the setup wizard and the server checks.
 
 = 1.1.1 =
 * The data folder inside uploads gets a random name (wp-content/uploads/qartvelo-guard/<random>/), so its files have no guessable address on nginx, which ignores .htaccess and web.config.

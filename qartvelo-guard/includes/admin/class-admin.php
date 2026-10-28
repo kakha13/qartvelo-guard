@@ -47,6 +47,9 @@ class Admin {
 	const PAGE_WIZARD    = 'wpcybersec-wizard';
 
 	const META_DISMISS_SETUP   = 'wpcybersec_dismiss_setup';
+
+	/** Most items one bulk action may touch (the risk check inspects every one of them). */
+	const MAX_BULK = 500;
 	const META_DISMISS_PENDING = 'wpcybersec_dismiss_pending';
 	const META_DISMISS_STORAGE = 'wpcybersec_dismiss_storage';
 
@@ -947,7 +950,7 @@ class Admin {
 		if ( $counts['pending'] > 0 ) {
 			$lines[] = sprintf(
 				/* translators: %s: number of items */
-				_n( '%s upload, install or file is waiting for your approval.', '%s uploads, installs or files are waiting for your approval.', $counts['pending'], 'qartvelo-guard' ),
+				_n( '%s upload, install, file or account is waiting for your approval.', '%s uploads, installs, files or accounts are waiting for your approval.', $counts['pending'], 'qartvelo-guard' ),
 				number_format_i18n( $counts['pending'] )
 			);
 		}
@@ -1089,7 +1092,10 @@ class Admin {
 		if ( $counts['pending'] + $counts['threats'] < 1 ) {
 			return;
 		}
-		$css = '#wpadminbar #wp-admin-bar-wpcybersec .ab-icon:before{content:"\f332";top:2px}'
+		// The sidebar count sits over the menu icon: next to the name it does not
+		// fit in the 160px menu and drops to a second line.
+		$css = '#adminmenu li.toplevel_page_wpcybersec .wp-menu-name .wpcs-menu-count{position:absolute;top:2px;left:16px;margin:0;min-width:16px;height:16px;padding:0 4px;border-radius:8px;font-size:9px;line-height:16px}'
+			. '#wpadminbar #wp-admin-bar-wpcybersec .ab-icon:before{content:"\f332";top:2px}'
 			. '#wpadminbar #wp-admin-bar-wpcybersec .wpcs-ab-count{display:inline-block;min-width:18px;height:18px;margin-left:6px;padding:0 5px;border-radius:9px;background:#d63638;color:#fff;font-size:11px;line-height:18px;text-align:center;vertical-align:middle;box-sizing:border-box}'
 			. '#wpadminbar #wp-admin-bar-wpcybersec:not(.wpcs-ab-threats) .wpcs-ab-count{background:#dba617;color:#1d2327}'
 			. '@media screen and (max-width:782px){#wpadminbar #wp-admin-bar-wpcybersec{display:block}#wpadminbar #wp-admin-bar-wpcybersec .ab-label{display:none}#wpadminbar #wp-admin-bar-wpcybersec .ab-icon:before{top:0}}';
@@ -1362,7 +1368,7 @@ class Admin {
 		$action = '';
 		$ids    = array();
 		$single = isset( $_POST['wpcs_single'] ) ? sanitize_text_field( wp_unslash( $_POST['wpcs_single'] ) ) : '';
-		if ( '' !== $single && preg_match( '/^([a-z]+):(\d+)$/', $single, $m ) ) {
+		if ( '' !== $single && preg_match( '/^([a-z_]+):(\d+)$/', $single, $m ) ) { // restore_official has an underscore.
 			$action = $m[1];
 			$ids    = array( (int) $m[2] );
 		} else {
@@ -1380,6 +1386,10 @@ class Admin {
 		}
 		if ( ! $ids ) {
 			$this->redirect_back( $fallback, array( 'wpcs_msg' => 'no_items' ) );
+		}
+
+		if ( count( $ids ) > self::MAX_BULK ) {
+			$this->redirect_back( $fallback, array( 'wpcs_msg' => 'too_many' ) );
 		}
 
 		// Allowing something flagged high or critical is confirmed first (the
@@ -1418,7 +1428,8 @@ class Admin {
 	 */
 	public static function risky_items( array $ids ) {
 		$out = array();
-		foreach ( array_slice( array_values( array_unique( array_map( 'intval', $ids ) ) ), 0, 500 ) as $id ) {
+		// Every id the action will touch is inspected (the callers cap a request at MAX_BULK ids).
+		foreach ( array_values( array_unique( array_map( 'intval', $ids ) ) ) as $id ) {
 			$item = $id > 0 ? self::call( 'store', 'item_get', array( $id ) ) : null;
 			if ( is_array( $item ) && self::needs_risk_confirm( $item ) ) {
 				$out[] = $item;
@@ -1546,7 +1557,10 @@ class Admin {
 
 		$user_id = get_current_user_id();
 		if ( 'setup' === $which ) {
-			update_user_meta( $user_id, self::META_DISMISS_SETUP, time() + 3 * DAY_IN_SECONDS );
+			// A site with a baseline is protected without the wizard: dismissed for
+			// good then. Without one the reminder returns in three days.
+			$baseline = (int) \WPCyberSecurity\Network::get_option( 'wpcybersec_baseline_at', 0 );
+			update_user_meta( $user_id, self::META_DISMISS_SETUP, $baseline > 0 ? PHP_INT_MAX : time() + 3 * DAY_IN_SECONDS );
 		} elseif ( 'pending' === $which ) {
 			update_user_meta( $user_id, self::META_DISMISS_PENDING, self::newest_open_item_id() );
 		} elseif ( 'storage' === $which ) {

@@ -2014,10 +2014,36 @@ class Scanner {
 		if ( $this->function_enabled( 'exec' ) ) {
 			$lines = array();
 			$code  = 0;
-			@exec( $cmd, $lines, $code ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec, WordPress.PHP.NoSilencedErrors.Discouraged -- the server's clamscan/clamdscan with escapeshellarg() arguments: the EICAR self-test when an admin opens the antivirus status, and file scans once the admin turned ClamAV on.
+			// exec() cannot be interrupted from PHP: the coreutils timeout
+			// program bounds it instead (exit code 124 when the time is up).
+			$bin = self::timeout_binary();
+			$run = '' !== $bin ? escapeshellarg( $bin ) . ' ' . max( 1, (int) ceil( (float) $timeout ) ) . ' ' . $cmd : $cmd;
+			@exec( $run, $lines, $code ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec, WordPress.PHP.NoSilencedErrors.Discouraged -- the server's clamscan/clamdscan with escapeshellarg() arguments: the EICAR self-test when an admin opens the antivirus status, and file scans once the admin turned ClamAV on.
+			if ( '' !== $bin && 124 === (int) $code ) {
+				return null;
+			}
 			return array( (int) $code, implode( "\n", array_slice( $lines, 0, 500 ) ) );
 		}
 		return null;
+	}
+
+	/**
+	 * The coreutils "timeout" program, '' when the server has none.
+	 *
+	 * @return string
+	 */
+	private static function timeout_binary() {
+		static $bin = null;
+		if ( null === $bin ) {
+			$bin = '';
+			foreach ( array( '/usr/bin/timeout', '/bin/timeout', '/usr/local/bin/timeout' ) as $candidate ) {
+				if ( @is_executable( $candidate ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+					$bin = $candidate;
+					break;
+				}
+			}
+		}
+		return $bin;
 	}
 
 	/* ------------------------------------------------------------------ */

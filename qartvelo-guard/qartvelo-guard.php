@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Qartvelo Guard
  * Description:       Scans the whole site for malware and backdoors, holds every new upload, plugin or theme install and unknown file until an administrator approves it, and remembers each approval permanently.
- * Version:           1.1.1
+ * Version:           1.1.2
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Kakha Giorgashvili
@@ -19,8 +19,8 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'WPCYBERSEC_VERSION', '1.1.1' );
-define( 'WPCYBERSEC_DB_VERSION', '5' ); // 4: manifest mtime index (Reports > Recent changes). 5: multisite network mode (Network).
+define( 'WPCYBERSEC_VERSION', '1.1.2' );
+define( 'WPCYBERSEC_DB_VERSION', '6' ); // 4: manifest mtime index (Reports > Recent changes). 5: multisite network mode (Network). 6: php2/php6 executable extensions.
 define( 'WPCYBERSEC_FILE', __FILE__ );
 define( 'WPCYBERSEC_DIR', plugin_dir_path( __FILE__ ) );
 define( 'WPCYBERSEC_URL', plugin_dir_url( __FILE__ ) );

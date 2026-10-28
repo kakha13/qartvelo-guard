@@ -369,10 +369,11 @@ class Cli {
 	/* ------------------------------------------------------------------ */
 
 	/**
-	 * Creates the security report: one self-contained HTML file with the scan
-	 * results, open items with their code, settings, environment checks and
-	 * recent activity. Secret values are hidden and email addresses shortened,
-	 * so it is safe to send to a developer.
+	 * Creates the security report (one self-contained HTML file).
+	 *
+	 * It holds the scan results, open items with their code, settings,
+	 * environment checks and recent activity. Secret values are hidden and
+	 * email addresses shortened, so it is safe to send to a developer.
 	 *
 	 * ## OPTIONS
 	 *
@@ -561,7 +562,9 @@ class Cli {
 					'id'       => (int) $item['id'],
 					'type'     => $item['type'],
 					'severity' => Store::severity_label( $item['severity'] ),
-					'path'     => $item['path'],
+					'path'     => Store::TYPE_USER === $item['type']
+						? sprintf( '%s (user #%d)', User_Watch::item_login( $item ), User_Watch::item_user_id( $item ) )
+						: $item['path'],
 					'size'     => $item['size'] ? size_format( (int) $item['size'] ) : '-',
 					'source'   => $item['source'],
 					'held'     => '' !== (string) $item['quarantine_path'] ? 'yes' : 'no',
@@ -629,6 +632,62 @@ class Cli {
 	}
 
 	/**
+	 * Replaces changed WordPress core files with the official copy of the installed version.
+	 *
+	 * The current file is kept as a copy, so the change can still be viewed on the Reports page.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <id>...
+	 * : One or more item IDs of changed core files (see wp wpcybersec threats).
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     $ wp wpcybersec restore-official 24
+	 *
+	 * @subcommand restore-official
+	 *
+	 * @param array $args       Item ids.
+	 * @param array $assoc_args Associative arguments.
+	 */
+	public function restore_official( $args, $assoc_args ) {
+		unset( $assoc_args );
+		$store     = $this->service( 'store' );
+		$decisions = $this->service( 'decisions' );
+		$failed    = 0;
+		foreach ( $args as $raw ) {
+			$id   = (int) $raw;
+			$item = $id > 0 ? $store->item_get( $id ) : null;
+			if ( ! $item ) {
+				/* translators: %s: item id */
+				\WP_CLI::warning( sprintf( __( 'Item #%s not found.', 'qartvelo-guard' ), $raw ) );
+				++$failed;
+				continue;
+			}
+			if ( ! in_array( 'restore_official', Decisions::available( $item ), true ) ) {
+				/* translators: %d: item id */
+				\WP_CLI::warning( sprintf( __( 'Item #%d has no official copy to restore (only changed WordPress core files have one).', 'qartvelo-guard' ), $id ) );
+				++$failed;
+				continue;
+			}
+			$result = $decisions->apply( 'restore_official', $id );
+			if ( is_wp_error( $result ) ) {
+				/* translators: 1: item id, 2: error message */
+				\WP_CLI::warning( sprintf( __( 'Item #%1$d: %2$s', 'qartvelo-guard' ), $id, $result->get_error_message() ) );
+				++$failed;
+				continue;
+			}
+			/* translators: 1: item id, 2: path */
+			\WP_CLI::log( sprintf( __( 'Item #%1$d: the official file is back (%2$s).', 'qartvelo-guard' ), $id, $item['path'] ) );
+		}
+		if ( $failed ) {
+			/* translators: 1: failed items, 2: all items */
+			\WP_CLI::error( sprintf( __( '%1$d of %2$d items could not be processed.', 'qartvelo-guard' ), $failed, count( $args ) ) );
+		}
+		\WP_CLI::success( __( 'Done.', 'qartvelo-guard' ) );
+	}
+
+	/**
 	 * @param string $verb       approve | deny.
 	 * @param array  $ids        Ids.
 	 * @param array  $assoc_args Arguments.
@@ -668,6 +727,13 @@ class Cli {
 				if ( 'deny' === $verb && ! $delete && '' !== (string) $item['quarantine_path'] ) {
 					/* translators: %d: item id */
 					\WP_CLI::warning( sprintf( __( 'Item #%d is already in quarantine. Use --delete to delete it permanently.', 'qartvelo-guard' ), $id ) );
+				} elseif ( 'deny' === $verb && Store::STATUS_PENDING === $item['status'] && in_array( $item['type'], array( Store::TYPE_FILE, Store::TYPE_THREAT ), true ) ) {
+					// A critical WordPress file: never quarantined or deleted.
+					\WP_CLI::warning( in_array( 'restore_official', $available, true )
+						/* translators: 1: item id, 2: item id */
+						? sprintf( __( 'Item #%1$d is a critical WordPress file: it cannot be quarantined or deleted. Use `wp wpcybersec restore-official %2$d` to replace it with the official copy, or `approve` to mark it safe.', 'qartvelo-guard' ), $id, $id )
+						/* translators: %d: item id */
+						: sprintf( __( 'Item #%d is a critical WordPress file: it cannot be quarantined or deleted. Restore it from a backup, or `approve` to mark it safe.', 'qartvelo-guard' ), $id ) );
 				} else {
 					/* translators: 1: item id, 2: status, 3: verb */
 					\WP_CLI::warning( sprintf( __( 'Item #%1$d is %2$s and cannot be %3$s.', 'qartvelo-guard' ), $id, $item['status'], 'approve' === $verb ? __( 'approved', 'qartvelo-guard' ) : __( 'denied', 'qartvelo-guard' ) ) );
@@ -703,9 +769,10 @@ class Cli {
 	 *
 	 * ## OPTIONS
 	 *
-	 * <action>
+	 * [<action>]
 	 * : What to do.
 	 * ---
+	 * default: list
 	 * options:
 	 *   - list
 	 *   - add
@@ -833,9 +900,10 @@ class Cli {
 	 *
 	 * ## OPTIONS
 	 *
-	 * <action>
+	 * [<action>]
 	 * : What to do.
 	 * ---
+	 * default: status
 	 * options:
 	 *   - install
 	 *   - uninstall
@@ -936,7 +1004,11 @@ class Cli {
 		unset( $args );
 		$gate     = $this->service( 'install_gate' );
 		$settings = $this->service( 'settings' );
-		$minutes  = (int) $this->flag( $assoc_args, 'minutes', $settings->get( 'unlock_minutes', 15 ) );
+		$given    = $this->flag( $assoc_args, 'minutes', null );
+		if ( null !== $given && ( ! is_numeric( $given ) || (string) (int) $given !== trim( (string) $given ) || (int) $given < 1 || (int) $given > 1440 ) ) {
+			\WP_CLI::error( __( 'Give --minutes as a whole number between 1 and 1440.', 'qartvelo-guard' ) );
+		}
+		$minutes  = null === $given ? (int) $settings->get( 'unlock_minutes', 15 ) : (int) $given;
 		$minutes  = max( 1, min( 1440, $minutes ) );
 		if ( Install_Gate::mods_disallowed() ) {
 			\WP_CLI::error( __( 'Installs and updates are disabled by the site config (DISALLOW_FILE_MODS in wp-config.php), so there is nothing to unlock.', 'qartvelo-guard' ) );

@@ -74,9 +74,15 @@ class Quarantine {
 		if ( is_wp_error( $src ) ) {
 			return $src;
 		}
-		$dest = (string) $item['original_path'];
+		$dest = wp_normalize_path( (string) $item['original_path'] );
 		if ( '' === $dest ) {
 			return new \WP_Error( 'wpcybersec_q_target', __( 'This item has no original location to restore to.', 'qartvelo-guard' ) );
+		}
+		// Same rule as Decisions::live_path(): only inside the scanned folders,
+		// never inside the data folder (the row is data, not a trusted path).
+		$scope = file_exists( $dest ) ? $dest : dirname( $dest );
+		if ( ! Paths::in_scope( $scope ) || Storage::is_within( $dest, wpcybersec()->storage->data_dir() ) ) {
+			return new \WP_Error( 'wpcybersec_q_target', __( 'Refusing to restore a file outside the scanned folders.', 'qartvelo-guard' ) );
 		}
 		if ( file_exists( $dest ) ) {
 			if ( $item['sha256'] && hash_file( 'sha256', $dest ) === $item['sha256'] ) {

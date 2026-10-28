@@ -93,12 +93,30 @@ class Dashboard_Page {
 		$saved    = Admin::call( 'settings', 'all', array(), array() );
 		$this->s  = array_merge( $defaults, is_array( $saved ) ? $saved : array() );
 
+		// The small states this page shows are stored without autoload: one query for all of them.
+		\WPCyberSecurity\Network::prime_options(
+			array(
+				'wpcybersec_last_scan',
+				'wpcybersec_job',
+				'wpcybersec_baseline_at',
+				'wpcybersec_core_reinstall',
+				'wpcybersec_core_backups',
+				'wpcybersec_trusted_admins',
+				'wpcybersec_db_scan',
+				'wpcybersec_guard_ping_result',
+				'wpcybersec_clamav_selftest',
+				'wpcybersec_clamav_slow_uploads',
+				'wpcybersec_guard_installed',
+				'wpcybersec_hosting',
+				'wpcybersec_fix_failures',
+			)
+		);
 		$this->counts  = Admin::counts();
 		$last          = Admin::call( 'scan_job', 'last_result', array(), array() );
 		$this->last    = is_array( $last ) ? $last : array();
 		$job           = Admin::call( 'scan_job', 'status', array(), array() );
 		$this->job     = is_array( $job ) ? $job : array();
-		$this->trusted     = (int) Admin::call( 'store', 'manifest_count', array( Store::STATE_TRUSTED ), 0 );
+		$this->trusted     = (int) Admin::call( 'store', 'manifest_count', array(), 0 ); // Every fingerprinted file, as the CLI, the report and the wizard count it.
 		$this->baseline_at = (int) \WPCyberSecurity\Network::get_option( 'wpcybersec_baseline_at', 0 );
 	}
 
@@ -202,7 +220,7 @@ class Dashboard_Page {
 			number_format_i18n( $pending ),
 			__( 'Waiting for approval', 'qartvelo-guard' ),
 			$pending > 0
-				? '<a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'pending' ) ) ) . '">' . esc_html__( 'Review and allow on Reports', 'qartvelo-guard' ) . ' &rarr;</a>'
+				? '<a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'pending' ) ) ) . '">' . esc_html__( 'Review on Reports', 'qartvelo-guard' ) . ' &rarr;</a>'
 				: esc_html__( 'Nothing is waiting for you.', 'qartvelo-guard' ),
 			'pending'
 		);
@@ -228,7 +246,7 @@ class Dashboard_Page {
 			number_format_i18n( $held ),
 			__( 'In quarantine', 'qartvelo-guard' ),
 			$held > 0
-				? '<a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'quarantine' ) ) ) . '">' . esc_html__( 'Held copies cannot run', 'qartvelo-guard' ) . ' &rarr;</a>'
+				? '<a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'quarantine' ) ) ) . '">' . esc_html__( 'See the held files', 'qartvelo-guard' ) . ' &rarr;</a>'
 				: esc_html__( 'No files are held right now.', 'qartvelo-guard' ),
 			'quarantined'
 		);
@@ -241,7 +259,7 @@ class Dashboard_Page {
 			__( 'Files monitored', 'qartvelo-guard' ),
 			$this->baseline_at > 0
 				/* translators: %s: relative time such as "3 days ago" */
-				? esc_html( sprintf( __( 'Trusted fingerprints. Baseline recorded %s.', 'qartvelo-guard' ), Admin::ago( $this->baseline_at ) ) )
+				? esc_html( sprintf( __( 'Files with a fingerprint. Baseline recorded %s.', 'qartvelo-guard' ), Admin::ago( $this->baseline_at ) ) )
 				: esc_html__( 'No baseline yet. Run the setup wizard or rebuild the baseline.', 'qartvelo-guard' )
 		);
 
@@ -299,6 +317,15 @@ class Dashboard_Page {
 		}
 		$mode = $this->mode_label( isset( $this->last['mode'] ) ? $this->last['mode'] : '' );
 		$meta = $mode . ' - ' . $this->result_summary( $this->last );
+		if ( 'ok' === $tone && $this->counts['threats'] > 0 ) {
+			// The last run found nothing new, but earlier findings are still open.
+			$tone  = 'warn';
+			$meta .= ' ' . sprintf(
+				/* translators: %s: number of threats */
+				_n( '%s threat still waits on Reports.', '%s threats still wait on Reports.', $this->counts['threats'], 'qartvelo-guard' ),
+				number_format_i18n( $this->counts['threats'] )
+			);
+		}
 		$this->stat( $tone, 'search', Admin::ago( $finished ), __( 'Last scan', 'qartvelo-guard' ), esc_html( $meta ), '', 'wpcs-stat__value--text' );
 	}
 
@@ -639,6 +666,16 @@ class Dashboard_Page {
 			$desc = sprintf(
 				/* translators: %s: number of accounts */
 				_n( '%s new administrator account is waiting for your review.', '%s new administrator accounts are waiting for your review.', $waiting, 'qartvelo-guard' ),
+				number_format_i18n( $waiting )
+			) . ' ' . sprintf(
+				/* translators: %s: number of administrators */
+				_n( '%s administrator is trusted.', '%s administrators are trusted.', $trusted, 'qartvelo-guard' ),
+				number_format_i18n( $trusted )
+			);
+			// The badge names the problem, not the trusted count.
+			$badge = sprintf(
+				/* translators: %s: number of accounts */
+				_n( '%s waiting', '%s waiting', $waiting, 'qartvelo-guard' ),
 				number_format_i18n( $waiting )
 			);
 			$this->prow( 'admin-users', $title, $desc, $badge, 'high', $link );
@@ -1004,7 +1041,11 @@ class Dashboard_Page {
 			/* translators: %s: number */
 			$parts[] = sprintf( _n( '%s modified', '%s modified', $changed, 'qartvelo-guard' ), number_format_i18n( $changed ) );
 		}
-		return $parts ? implode( ', ', $parts ) : __( 'no problems found', 'qartvelo-guard' );
+		if ( $parts ) {
+			return implode( ', ', $parts );
+		}
+		// A quick scan only looks at what changed since the last one.
+		return 'incremental' === ( isset( $status['mode'] ) ? (string) $status['mode'] : '' ) ? __( 'no new problems found', 'qartvelo-guard' ) : __( 'no problems found', 'qartvelo-guard' );
 	}
 
 	/**

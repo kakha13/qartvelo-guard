@@ -238,7 +238,7 @@ class Wizard {
 			array(
 				'lock',
 				__( 'Holds every new upload until you allow it', 'qartvelo-guard' ),
-				__( 'New media files, plugin and theme installs and unknown PHP files wait in a safe quarantine until an administrator approves them on the Reports page.', 'qartvelo-guard' ),
+				__( 'New media files and plugin or theme installs wait in a safe quarantine until an administrator approves them on the Reports page. New PHP files that appear on the server are reported for review (the Strict level moves them away too).', 'qartvelo-guard' ),
 			),
 			array(
 				'saved',
@@ -255,7 +255,7 @@ class Wizard {
 		<div class="wpcs-wizard__hero">
 			<span class="wpcs-wizard__hero-icon"><span class="dashicons dashicons-shield" aria-hidden="true"></span></span>
 			<h2 class="wpcs-wizard__hero-title"><?php esc_html_e( 'Welcome to Qartvelo Guard', 'qartvelo-guard' ); ?></h2>
-			<p class="wpcs-wizard__lead"><?php esc_html_e( 'From now on nothing new runs, installs or appears on your site without your approval. This short setup picks safe settings for you.', 'qartvelo-guard' ); ?></p>
+			<p class="wpcs-wizard__lead"><?php esc_html_e( 'From now on nothing new is uploaded or installed on your site without your approval. This short setup picks safe settings for you.', 'qartvelo-guard' ); ?></p>
 		</div>
 		<ul class="wpcs-features">
 			<?php foreach ( $features as $feature ) : ?>
@@ -985,10 +985,33 @@ class Wizard {
 			$rows[] = array( 'sos', __( 'Antivirus', 'qartvelo-guard' ), $this->antivirus_summary( $av ), $this->antivirus_tone( $av ) );
 		}
 		$alerts_off = 'off' === $s['notify_mode'];
+		$counts     = Admin::counts();
+		$open       = (int) $counts['threats'] + (int) $counts['pending'];
+		if ( $counts['threats'] > 0 ) {
+			Settings_Page::notice(
+				sprintf(
+					/* translators: %s: number of threats */
+					_n( 'The baseline scan found %s possible threat. Review it on Reports > Threats before you approve anything.', 'The baseline scan found %s possible threats. Review them on Reports > Threats before you approve anything.', $counts['threats'], 'qartvelo-guard' ),
+					number_format_i18n( $counts['threats'] )
+				) . ' <a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'threats' ) ) ) . '">' . esc_html__( 'Open the threats', 'qartvelo-guard' ) . '</a>',
+				'bad',
+				true
+			);
+		} elseif ( $counts['pending'] > 0 ) {
+			Settings_Page::notice(
+				sprintf(
+					/* translators: %s: number of items */
+					_n( '%s item already waits for your decision on the Reports page.', '%s items already wait for your decision on the Reports page.', $counts['pending'], 'qartvelo-guard' ),
+					number_format_i18n( $counts['pending'] )
+				) . ' <a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS ) ) . '">' . esc_html__( 'Open Reports', 'qartvelo-guard' ) . '</a>',
+				'info',
+				true
+			);
+		}
 		?>
 		<div class="wpcs-wizard__hero wpcs-wizard__hero--done">
-			<span class="wpcs-wizard__hero-icon"><span class="dashicons dashicons-yes" aria-hidden="true"></span></span>
-			<h2 class="wpcs-wizard__hero-title"><?php esc_html_e( 'Your site is protected', 'qartvelo-guard' ); ?></h2>
+			<span class="wpcs-wizard__hero-icon"><span class="dashicons dashicons-<?php echo $open > 0 ? 'flag' : 'yes'; ?>" aria-hidden="true"></span></span>
+			<h2 class="wpcs-wizard__hero-title"><?php echo esc_html( $counts['threats'] > 0 ? __( 'Setup is complete: review the threats', 'qartvelo-guard' ) : ( $open > 0 ? __( 'Setup is complete', 'qartvelo-guard' ) : __( 'Your site is protected', 'qartvelo-guard' ) ) ); ?></h2>
 			<p class="wpcs-wizard__lead">
 				<?php
 				echo esc_html(

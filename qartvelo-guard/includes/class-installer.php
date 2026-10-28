@@ -38,10 +38,20 @@ class Installer {
 	public static function activate( $network_wide = false ) {
 		unset( $network_wide );
 		self::install();
-		// Read by Admin on the next admin page load to open the setup wizard.
-		Network::update_option( self::REDIRECT_OPTION, get_current_user_id() ? get_current_user_id() : 1 ); // Autoloaded (Network::STATE_OPTIONS).
+		// Read by Admin on the next admin page load to open the setup wizard
+		// (not after "wp plugin activate": that would redirect the next admin page view).
+		if ( ! ( defined( 'WP_CLI' ) && WP_CLI ) ) {
+			Network::update_option( self::REDIRECT_OPTION, get_current_user_id() ? get_current_user_id() : 1 ); // Autoloaded (Network::STATE_OPTIONS).
+		}
 		if ( Network::get_option( 'wpcybersec_guard_installed' ) ) {
 			Guard_Config::set_enabled( true );
+			// The plugin folder may have been renamed since the bootstrap was
+			// written (1.1.0 renamed it): point it at the current guard file.
+			try {
+				( new Guard_Manager() )->heal_bootstrap();
+			} catch ( \Throwable $e ) {
+				unset( $e );
+			}
 		} else {
 			// A guard bootstrap an earlier install left behind (another data
 			// folder): rewritten for the current folder, so scans do not report it.
@@ -178,6 +188,9 @@ class Installer {
 			if ( $old && version_compare( (string) $old, '3', '<' ) ) {
 				self::add_default_exclusion( 'error_log' );
 			}
+			if ( $old && version_compare( (string) $old, '6', '<' ) ) {
+				self::add_default_exec_extensions( array( 'php2', 'php6' ) ); // The signature engine already treated them as PHP.
+			}
 		} elseif ( ! Network::active() && ! get_option( Network::AUTOLOAD_FLAG ) ) {
 			self::autoload_state_options();
 		}
@@ -230,6 +243,23 @@ class Installer {
 	 * existing install (once, when upgrading past the version that added it).
 	 *
 	 * @param string $pattern Exclusion pattern.
+	 */
+	private static function add_default_exec_extensions( array $extensions ) {
+		$settings = Network::get_option( Settings::OPTION, array() );
+		if ( ! is_array( $settings ) || ! isset( $settings['exec_extensions'] ) || ! is_array( $settings['exec_extensions'] ) ) {
+			return; // Defaults apply.
+		}
+		$missing = array_diff( $extensions, $settings['exec_extensions'] );
+		if ( $missing ) {
+			$settings['exec_extensions'] = array_values( array_merge( $settings['exec_extensions'], $missing ) );
+			Network::update_option( Settings::OPTION, $settings );
+		}
+	}
+
+	/**
+	 * Adds a scan exclusion to an existing settings row (new installs get it from the defaults).
+	 *
+	 * @param string $pattern Exclusion.
 	 */
 	private static function add_default_exclusion( $pattern ) {
 		$settings = Network::get_option( Settings::OPTION, array() );

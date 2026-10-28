@@ -90,7 +90,16 @@ class Hardening {
 			return; // WordPress reports no uploads folder.
 		}
 		Network::update_option( Storage::LEGACY_MOVE_OPTION, time(), true );
-		$this->move_data_dir( $storage->default_dir() );
+		$moved = $this->move_data_dir( $storage->default_dir() );
+		if ( is_wp_error( $moved ) && wpcybersec()->logger ) {
+			// Tried again tomorrow; the activity log says why it did not happen today.
+			wpcybersec()->logger->log(
+				'data_dir_move',
+				/* translators: 1: old folder, 2: error message */
+				sprintf( __( 'The old data folder %1$s could not be moved yet: %2$s', 'qartvelo-guard' ), $storage->legacy_dir(), $moved->get_error_message() ),
+				array( 'from' => $storage->legacy_dir(), 'to' => $storage->default_dir() )
+			);
+		}
 	}
 
 	/**
@@ -201,7 +210,7 @@ class Hardening {
 				return array(
 					'id'          => 'file_edit',
 					'label'       => __( 'Turn off the code editor', 'qartvelo-guard' ),
-					'description' => __( 'Removes Appearance > Theme File Editor and Plugins > Plugin File Editor. You can switch it back on in Settings.', 'qartvelo-guard' ),
+					'description' => __( 'Removes Appearance > Theme File Editor and Plugins > Plugin File Editor. You can switch it back on under Settings > Advanced > Freeze lock > Code editor.', 'qartvelo-guard' ),
 				);
 
 			case 'data_dir':
@@ -275,8 +284,8 @@ class Hardening {
 				);
 
 			case 'uploads_php':
-				if ( 'nginx' === $this->server_type() ) {
-					return null;
+				if ( in_array( $this->server_type(), array( 'nginx', 'iis' ), true ) ) {
+					return null; // Neither reads .htaccess: the by-hand steps apply.
 				}
 				return array(
 					'id'          => 'uploads_php',
@@ -312,7 +321,7 @@ class Hardening {
 					array( 'text' => __( 'Enter 640 (or 600 if your host recommends it) and save. Then reload this page.', 'qartvelo-guard' ) ),
 					array(
 						'text' => __( 'With SSH instead, run:', 'qartvelo-guard' ),
-						'code' => 'chmod 640 ' . ( $config ? $config : 'wp-config.php' ),
+						'code' => 'chmod 640 ' . Sysadmin_Tools::shell_arg( $config ? $config : 'wp-config.php' ),
 					),
 				);
 
@@ -356,6 +365,14 @@ class Hardening {
 				return $this->for_panel( 'data_dir', $this->data_dir_steps( $above ) );
 
 			case 'uploads_php':
+				if ( 'iis' === $this->server_type() ) {
+					return $this->for_panel(
+						'web_rules',
+						array(
+							array( 'text' => __( 'IIS ignores .htaccess files. Save this as web.config inside wp-content/uploads (or merge the rules into the one that is there), then run the live test again:', 'qartvelo-guard' ), 'code' => Sysadmin_Tools::iis_uploads_rule() ),
+						)
+					);
+				}
 				if ( 'nginx' === $this->server_type() ) {
 					return $this->for_panel(
 						'web_rules',

@@ -617,13 +617,17 @@ class Sysadmin_Tools {
 	/* Diagnostics                                                         */
 	/* ------------------------------------------------------------------ */
 
+	/** @var bool Whether diagnostics() may run live HTTP probes when nothing is cached. */
+	private $live_probes = true;
+
 	/**
 	 * Environment checks for the wizard and the advanced settings.
 	 *
 	 * @param bool $fresh True to ignore cached live probe results.
 	 * @return array[] Each { id, label, status pass|warn|fail|info, detail, fix, code, actions[] }.
 	 */
-	public function diagnostics( $fresh = false ) {
+	public function diagnostics( $fresh = false, $live = true ) {
+		$this->live_probes = (bool) $live;
 		$methods = array(
 			'check_php',
 			'check_wordpress',
@@ -806,7 +810,17 @@ class Sysadmin_Tools {
 			'id'    => 'quarantine_web',
 			'label' => __( 'Quarantine is not reachable from the web', 'qartvelo-guard' ),
 		);
-		$probe = $this->probe_quarantine_web( $fresh );
+		// Without $live (the dashboard's developer count) no HTTP probe runs: the
+		// last result of the hour is shown, or "not tested".
+		$probe = ( $fresh || $this->live_probes ) ? $this->probe_quarantine_web( $fresh ) : $this->cached_probe( 'quarantine_web' );
+		if ( ! is_array( $probe ) || empty( $probe['result'] ) ) {
+			$probe = array(
+				'result'  => 'unknown',
+				'code'    => 0,
+				'message' => __( 'Not tested in the last hour. Settings > Advanced > Server health runs the live test.', 'qartvelo-guard' ),
+				'time'    => 0,
+			);
+		}
 		switch ( $probe['result'] ) {
 			case 'outside':
 				$check['status'] = 'pass';
@@ -899,10 +913,44 @@ class Sysadmin_Tools {
 			$check['actions'] = array( 'probe' );
 			return $check;
 		}
+		if ( 'iis' === $server ) {
+			$check['status']  = 'info';
+			$check['detail']  = __( 'IIS does not read .htaccess files, so the block must be a web.config rule in the uploads folder.', 'qartvelo-guard' );
+			$check['fix']     = __( 'Save this as web.config in wp-content/uploads (or merge the rules into the one that is there), then run a live test.', 'qartvelo-guard' );
+			$check['code']    = self::iis_uploads_rule();
+			$check['actions'] = array( 'probe' );
+			return $check;
+		}
 		$check['status']  = 'info';
 		$check['detail']  = __( 'Unknown web server. Run a live test to see whether PHP runs in the uploads folder.', 'qartvelo-guard' );
 		$check['actions'] = array( 'probe' );
 		return $check;
+	}
+
+	/**
+	 * What to expect after .user.ini was written: PHP re-reads it after
+	 * user_ini.cache_ttl seconds (300 by default).
+	 *
+	 * @return string
+	 */
+	public static function user_ini_delay_text() {
+		$ttl = max( 0, (int) ini_get( 'user_ini.cache_ttl' ) );
+		if ( 0 === $ttl ) {
+			return __( 'auto_prepend_file was added to .user.ini. PHP reads it on the next request (user_ini.cache_ttl is 0).', 'qartvelo-guard' );
+		}
+		$minutes = max( 1, (int) ceil( $ttl / 60 ) );
+		/* translators: %d: number of minutes */
+		return sprintf( _n( 'auto_prepend_file was added to .user.ini. PHP picks it up within %d minute (user_ini.cache_ttl).', 'auto_prepend_file was added to .user.ini. PHP picks it up within %d minutes (user_ini.cache_ttl).', $minutes, 'qartvelo-guard' ), $minutes );
+	}
+
+	/**
+	 * web.config for the uploads folder: IIS serves everything there as a
+	 * static file and refuses requests for PHP names.
+	 *
+	 * @return string
+	 */
+	public static function iis_uploads_rule() {
+		return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n  <system.webServer>\n    <handlers>\n      <clear />\n      <add name=\"StaticFile\" path=\"*\" verb=\"*\" modules=\"StaticFileModule,DefaultDocumentModule\" resourceType=\"Either\" requireAccess=\"Read\" />\n    </handlers>\n    <security>\n      <requestFiltering>\n        <fileExtensions>\n          <add fileExtension=\".php\" allowed=\"false\" />\n          <add fileExtension=\".phtml\" allowed=\"false\" />\n          <add fileExtension=\".phar\" allowed=\"false\" />\n        </fileExtensions>\n      </requestFiltering>\n    </security>\n  </system.webServer>\n</configuration>\n";
 	}
 
 	/**
@@ -3358,6 +3406,11 @@ class Sysadmin_Tools {
 		remove_action( 'wp_mail_failed', $on_error );
 
 		if ( $ok ) {
+			$webhook = $notifier && method_exists( $notifier, 'webhook_error' ) ? (string) $notifier->webhook_error() : '';
+			if ( '' !== $webhook ) {
+				/* translators: 1: email addresses, 2: webhook error */
+				return new \WP_Error( 'wpcybersec_webhook', sprintf( __( 'The test email was sent to %1$s, but the webhook failed. %2$s', 'qartvelo-guard' ), implode( ', ', $emails ), $webhook ) );
+			}
 			return true;
 		}
 		$message = __( 'WordPress could not send the email. The server may not be set up to send mail; an SMTP plugin usually fixes this.', 'qartvelo-guard' );
@@ -4103,7 +4156,7 @@ class Sysadmin_Tools {
 			$messages = array(
 				'install'        => __( 'The guard files are installed. The guard starts working once PHP loads it through auto_prepend_file (the one-click button or the snippets below).', 'qartvelo-guard' ),
 				'uninstall'      => __( 'Early guard switched off. If you added auto_prepend_file to the server configuration, remove that line too.', 'qartvelo-guard' ),
-				'write_user_ini' => __( 'auto_prepend_file was added to .user.ini. PHP picks it up within 5 minutes (user_ini.cache_ttl).', 'qartvelo-guard' ),
+				'write_user_ini' => self::user_ini_delay_text(),
 			);
 			$ols = 'write_user_ini' === $op ? Guard_Manager::ols_activation_step() : null;
 			if ( $ols ) {

@@ -48,6 +48,17 @@ if ( is_multisite() && ! is_main_site() ) {
 $wpcybersec_root    = is_array( $wpcybersec_uploads ) && empty( $wpcybersec_uploads['error'] ) && ! empty( $wpcybersec_uploads['basedir'] )
 	? untrailingslashit( wp_normalize_path( (string) $wpcybersec_uploads['basedir'] ) ) . '/qartvelo-guard'
 	: '';
+// Whether a folder carries this site's marker file (Storage::write_marker()).
+$wpcybersec_marker_ok = static function ( $dir ) use ( $wpdb ) {
+	$file = $dir . '/.wpcybersec-site';
+	if ( ! is_file( $file ) || is_link( $file ) ) {
+		return false;
+	}
+	$text = (string) @file_get_contents( $file, false, null, 0, 1024 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- direct file call: uninstall cannot ask for FTP credentials.
+	// Same id as WPCyberSecurity\Storage::site_id().
+	$id = substr( md5( ABSPATH . $wpdb->base_prefix ), 0, 8 );
+	return (bool) preg_match( '/^site:\s*' . $id . '\s*$/m', $text );
+};
 $wpcybersec_token   = wpcybersec_uninstall_option( 'wpcybersec_data_token', '' );
 if ( '' !== $wpcybersec_root && ( is_dir( $wpcybersec_root . '/quarantine' ) || is_dir( $wpcybersec_root . '/jobs' ) ) ) {
 	$wpcybersec_default = $wpcybersec_root; // Version 1.1.0 kept the data in the folder itself.
@@ -55,6 +66,13 @@ if ( '' !== $wpcybersec_root && ( is_dir( $wpcybersec_root . '/quarantine' ) || 
 	$wpcybersec_default = $wpcybersec_root . '/' . $wpcybersec_token;
 } else {
 	$wpcybersec_default = '';
+	// The token option is gone: the folder is found again through its marker file, as Storage::private_dir() does.
+	foreach ( ( '' !== $wpcybersec_root && is_dir( $wpcybersec_root ) ) ? (array) scandir( $wpcybersec_root ) : array() as $wpcybersec_name ) {
+		if ( preg_match( '/^[a-z0-9]{32}$/', (string) $wpcybersec_name ) && is_dir( $wpcybersec_root . '/' . $wpcybersec_name ) && $wpcybersec_marker_ok( $wpcybersec_root . '/' . $wpcybersec_name ) ) {
+			$wpcybersec_default = $wpcybersec_root . '/' . $wpcybersec_name;
+			break;
+		}
+	}
 }
 $wpcybersec_moved   = is_multisite() ? '' : get_option( 'wpcybersec_data_dir', '' );
 $wpcybersec_moved   = is_string( $wpcybersec_moved ) && '' !== $wpcybersec_moved ? untrailingslashit( wp_normalize_path( $wpcybersec_moved ) ) : '';
@@ -284,16 +302,6 @@ delete_metadata( 'user', 0, 'wpcybersec_storage_move', '', true );
  * name). A WPCYBERSEC_DATA_DIR set by hand in wp-config.php is left for the
  * system administrator.
  */
-$wpcybersec_marker_ok = static function ( $dir ) use ( $wpdb ) {
-	$file = $dir . '/.wpcybersec-site';
-	if ( ! is_file( $file ) || is_link( $file ) ) {
-		return false;
-	}
-	$text = (string) @file_get_contents( $file, false, null, 0, 1024 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- direct file call: uninstall cannot ask for FTP credentials.
-	// Same id as WPCyberSecurity\Storage::site_id().
-	$id = substr( md5( ABSPATH . $wpdb->base_prefix ), 0, 8 );
-	return (bool) preg_match( '/^site:\s*' . $id . '\s*$/m', $text );
-};
 $wpcybersec_dirs = array();
 $wpcybersec_own_name = static function ( $dir ) {
 	return 0 === strpos( basename( $dir ), 'wpcybersec-' ) || 0 === strpos( basename( $dir ), 'qartvelo-guard' );

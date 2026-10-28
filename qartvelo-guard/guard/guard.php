@@ -409,24 +409,51 @@ if ( ! defined( 'WPCYBERSEC_GUARD_ACTIVE' ) ) {
 
 			/**
 			 * Whether the request carries WordPress login credentials: a logged-in
-			 * cookie or an Authorization header (application passwords).
+			 * cookie or an Authorization header (application passwords). Only
+			 * their shape can be checked here (WordPress is not loaded, so the
+			 * cookie signature cannot be verified): the exemption only decides
+			 * which gate holds the upload, the WordPress one instead of this one,
+			 * and WordPress itself still refuses the request when the credentials
+			 * are forged.
 			 *
 			 * @param array $config Config.
 			 * @return bool
 			 */
 			private static function has_credentials( array $config ) {
-				if ( '' !== self::server( 'HTTP_AUTHORIZATION', 16 ) || '' !== self::server( 'REDIRECT_HTTP_AUTHORIZATION', 16 ) || '' !== self::server( 'PHP_AUTH_USER', 16 ) ) {
+				foreach ( array( 'HTTP_AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION' ) as $key ) {
+					$auth = self::server( $key, 4096 );
+					// "Basic <base64 of user:password>" (application passwords) or "Bearer <token>".
+					if ( preg_match( '#^Basic [A-Za-z0-9+/]{4,}={0,2}$#', $auth ) && false !== strpos( (string) base64_decode( substr( $auth, 6 ), true ), ':' ) ) {
+						return true;
+					}
+					if ( preg_match( '#^Bearer [A-Za-z0-9._~+/=-]{16,}$#', $auth ) ) {
+						return true;
+					}
+				}
+				if ( '' !== self::server( 'PHP_AUTH_USER', 256 ) && '' !== self::server( 'PHP_AUTH_PW', 256 ) ) {
 					return true;
 				}
 				if ( empty( $_COOKIE ) || ! is_array( $_COOKIE ) ) {
 					return false;
 				}
+				$now    = time();
+				$wanted = (string) $config['login_cookie']; // LOGGED_IN_COOKIE of this site, '' when unknown.
 				foreach ( $_COOKIE as $name => $value ) {
 					if ( ! is_string( $value ) || '' === $value ) {
 						continue;
 					}
 					$name = (string) $name;
-					if ( 0 === strpos( $name, 'wordpress_logged_in_' ) || ( '' !== $config['login_cookie'] && $name === $config['login_cookie'] ) ) {
+					if ( '' !== $wanted ) {
+						$ours = $name === $wanted;
+					} else {
+						$ours = 0 === strpos( $name, 'wordpress_logged_in_' );
+					}
+					if ( ! $ours ) {
+						continue;
+					}
+					// user|expiry|session token|signature, as wp_generate_auth_cookie() writes it, and not expired.
+					$parts = explode( '|', $value );
+					if ( 4 === count( $parts ) && '' !== $parts[0] && preg_match( '/^[0-9]{1,12}$/', $parts[1] ) && (int) $parts[1] > $now && preg_match( '/^[A-Za-z0-9]{20,}$/', $parts[2] ) && preg_match( '/^[0-9a-f]{32,64}$/', $parts[3] ) ) {
 						return true;
 					}
 				}

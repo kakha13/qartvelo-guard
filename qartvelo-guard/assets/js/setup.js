@@ -672,6 +672,29 @@
 			}
 		}
 
+		// One form holds every section. A constrained field (a number outside min/max) in a hidden
+		// panel would cancel Save without any visible message: the invalid event does not bubble,
+		// so it is caught here while capturing, and the panel of the first invalid field is opened
+		// before the browser focuses that field and shows its message.
+		var form = input ? input.form : document.querySelector('form.wpcs-settings-form');
+		if (form) {
+			var opening = false;
+			form.addEventListener('invalid', function (e) {
+				if (opening || !e.target || !e.target.closest) {
+					return;
+				}
+				var panel = e.target.closest('[data-wpcs-panel]');
+				if (panel && panel.hidden) {
+					select(panel.getAttribute('data-wpcs-panel'));
+				}
+				// Later invalid fields of the same check keep the panel of the first (focused) one.
+				opening = true;
+				setTimeout(function () {
+					opening = false;
+				}, 0);
+			}, true);
+		}
+
 		tabs.forEach(function (tab) {
 			var key = tab.getAttribute('data-wpcs-section');
 			tab.setAttribute('role', 'tab');

@@ -93,7 +93,8 @@
 	}
 
 	var toastTimer = null;
-	function toast(message, isError) {
+	/* The live region is created empty in init(), so screen readers know it before the first message. */
+	function toastRegion() {
 		var el = document.querySelector('.wpcs-toast');
 		if (!el) {
 			el = document.createElement('div');
@@ -102,6 +103,10 @@
 			el.setAttribute('aria-live', 'polite');
 			document.body.appendChild(el);
 		}
+		return el;
+	}
+	function toast(message, isError) {
+		var el = toastRegion();
 		el.textContent = message;
 		el.classList.toggle('wpcs-toast--error', !!isError);
 		el.classList.add('is-visible');
@@ -117,15 +122,35 @@
 		return status && RUNNING.indexOf(status.state) !== -1;
 	}
 
-	function loop(onProgress) {
+	function wait(ms) {
+		return new Promise(function (resolve) {
+			setTimeout(resolve, ms);
+		});
+	}
+
+	/* Ticks until the scan stops running. A tick refused because another runner holds the lock
+	   (locked_out) returns at once, and so may one that made no progress: both wait before the
+	   next request instead of sending back-to-back admin-ajax requests from a second tab. */
+	function loop(onProgress, previous) {
 		return ajax('scan_tick').then(function (status) {
 			if (onProgress) {
 				onProgress(status);
 			}
-			if (isRunning(status)) {
-				return loop(onProgress);
+			if (!isRunning(status)) {
+				return status;
 			}
-			return status;
+			var delay = 0;
+			if (status.locked_out) {
+				delay = 1500;
+			} else if (previous && previous.state === status.state && String(previous.files_done) === String(status.files_done) && String(previous.files_total) === String(status.files_total)) {
+				delay = 1000;
+			}
+			if (!delay) {
+				return loop(onProgress, status);
+			}
+			return wait(delay).then(function () {
+				return loop(onProgress, status);
+			});
 		});
 	}
 
@@ -232,55 +257,62 @@
 				return;
 			}
 			e.preventDefault();
-			if (btn.getAttribute('data-confirm') && !btn._wpcsConfirmed) {
+			if (btn.disabled) {
+				return;
+			}
+			if (btn.getAttribute('data-confirm')) {
 				confirmDialog({ title: btn.getAttribute('data-confirm'), tone: 'ok', confirm: i18n.confirmYes || 'Continue' }).then(function (confirmed) {
-					if (confirmed) {
-						btn._wpcsConfirmed = true;
-						btn.click();
+					// Started directly rather than through a second click, so nothing is left behind
+					// when autoAttach() disabled the button meanwhile (a scan began elsewhere).
+					if (confirmed && !btn.disabled) {
+						startScan(btn);
 					}
 				});
 				return;
 			}
-			btn._wpcsConfirmed = false;
-			var target = document.querySelector(btn.getAttribute('data-target') || '[data-wpcs-progress-auto]');
-			var opts = {
-				mode: btn.getAttribute('data-mode') || 'incremental',
-				malware: btn.getAttribute('data-malware') !== '0',
-				trigger: btn.getAttribute('data-trigger') || 'manual'
-			};
-			var onProgress = function (status) {
-				renderProgress(target, status);
-				document.dispatchEvent(new CustomEvent('wpcybersec:scan-progress', { detail: status }));
-			};
-			// Another scan was running and has finished: start the one that was asked for, once.
-			var runRequested = function (attempt) {
-				return scan.run(opts, onProgress).then(function (status) {
-					if (status && status.otherScan && status.state === 'done' && attempt < 1) {
-						return runRequested(attempt + 1);
-					}
-					if (status && status.otherScan && status.notice) {
-						toast(status.notice, true);
-					}
-					return status;
-				});
-			};
-			setScanButtons(true);
-			runRequested(0)
-				.then(function (status) {
-					document.dispatchEvent(new CustomEvent('wpcybersec:scan-finished', { detail: status }));
-					if (btn.getAttribute('data-reload') === '1') {
-						setTimeout(function () {
-							window.location.reload();
-						}, 900);
-					} else {
-						setScanButtons(false);
-					}
-				})
-				.catch(function (err) {
-					toast(err.message, true);
-					setScanButtons(false);
-				});
+			startScan(btn);
 		});
+	}
+
+	function startScan(btn) {
+		var target = document.querySelector(btn.getAttribute('data-target') || '[data-wpcs-progress-auto]');
+		var opts = {
+			mode: btn.getAttribute('data-mode') || 'incremental',
+			malware: btn.getAttribute('data-malware') !== '0',
+			trigger: btn.getAttribute('data-trigger') || 'manual'
+		};
+		var onProgress = function (status) {
+			renderProgress(target, status);
+			document.dispatchEvent(new CustomEvent('wpcybersec:scan-progress', { detail: status }));
+		};
+		// Another scan was running and has finished: start the one that was asked for, once.
+		var runRequested = function (attempt) {
+			return scan.run(opts, onProgress).then(function (status) {
+				if (status && status.otherScan && status.state === 'done' && attempt < 1) {
+					return runRequested(attempt + 1);
+				}
+				if (status && status.otherScan && status.notice) {
+					toast(status.notice, true);
+				}
+				return status;
+			});
+		};
+		setScanButtons(true);
+		runRequested(0)
+			.then(function (status) {
+				document.dispatchEvent(new CustomEvent('wpcybersec:scan-finished', { detail: status }));
+				if (btn.getAttribute('data-reload') === '1') {
+					setTimeout(function () {
+						window.location.reload();
+					}, 900);
+				} else {
+					setScanButtons(false);
+				}
+			})
+			.catch(function (err) {
+				toast(err.message, true);
+				setScanButtons(false);
+			});
 	}
 
 	function autoAttach() {
@@ -484,15 +516,29 @@
 
 	function runItemAction(btn, action, id, extra) {
 		var row = btn.closest('[data-item-id]');
-		if (row) {
-			row.classList.add('is-busy');
-		}
+		// The row's buttons are disabled while the request runs: the CSS pointer-events rule
+		// stops the mouse, but not a second Enter on the still focused button.
+		var buttons = row ? row.querySelectorAll('[data-wpcs-action]') : [ btn ];
+		var setBusy = function (busy) {
+			Array.prototype.forEach.call(buttons, function (b) {
+				b.disabled = busy;
+			});
+			if (row) {
+				row.classList.toggle('is-busy', busy);
+				if (busy) {
+					row.setAttribute('aria-busy', 'true');
+				} else {
+					row.removeAttribute('aria-busy');
+				}
+			}
+		};
+		setBusy(true);
 		itemAction(action, id, extra)
 			.then(function (res) {
 				var status = res.item ? res.item.status : action;
 				var label = STATUS_LABEL[status] || { text: status, cls: 'muted' };
+				setBusy(false);
 				if (row) {
-					row.classList.remove('is-busy');
 					row.classList.add('is-done');
 					var statusCell = row.querySelector('[data-wpcs-status]');
 					if (statusCell) {
@@ -515,9 +561,7 @@
 				document.dispatchEvent(new CustomEvent('wpcybersec:item-updated', { detail: res }));
 			})
 			.catch(function (err) {
-				if (row) {
-					row.classList.remove('is-busy');
-				}
+				setBusy(false);
 				toast(err.message, true);
 			});
 	}
@@ -583,22 +627,37 @@
 		});
 	}
 
+	/* Follows a confirmed link or submits its form directly. A second, synthetic click would need
+	   an "already confirmed" flag, and that flag stays behind when the control is disabled by then. */
+	function proceed(el) {
+		if (el.tagName === 'A') {
+			if (el.href) {
+				window.location.href = el.href;
+			}
+			return;
+		}
+		var form = el.form || el.closest('form');
+		if (!form) {
+			return;
+		}
+		if (typeof form.requestSubmit === 'function') {
+			form.requestSubmit(el.type === 'submit' ? el : undefined);
+		} else {
+			form.submit();
+		}
+	}
+
 	function bindConfirm() {
 		document.addEventListener('click', function (e) {
 			var el = e.target.closest('[data-wpcs-confirm]');
 			if (!el) {
 				return;
 			}
-			if (el._wpcsConfirmed) {
-				el._wpcsConfirmed = false; // Confirmed: let this click through once.
-				return;
-			}
 			e.preventDefault();
 			e.stopImmediatePropagation();
 			confirmDialog({ title: el.getAttribute('data-wpcs-confirm') || i18n.confirm || 'Are you sure?', tone: 'danger', confirm: (el.textContent || el.value || '').trim() || i18n.confirmYes || 'Continue' }).then(function (confirmed) {
 				if (confirmed) {
-					el._wpcsConfirmed = true;
-					el.click();
+					proceed(el);
 				}
 			});
 		}, true);
@@ -660,6 +719,7 @@
 	};
 
 	function init() {
+		toastRegion();
 		bindConfirm();
 		bindScanButtons();
 		bindItemActions();

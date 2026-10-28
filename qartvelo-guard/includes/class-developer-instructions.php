@@ -142,7 +142,7 @@ class Developer_Instructions {
 	 */
 	public function items( $checks = null ) {
 		$tools  = wpcybersec()->sysadmin;
-		$checks = is_array( $checks ) ? $checks : ( $tools ? $tools->diagnostics( false ) : array() );
+		$checks = is_array( $checks ) ? $checks : ( $tools ? $tools->diagnostics( false, false ) : array() ); // Cached probes only: this also runs for the dashboard count.
 		$by_id  = array();
 		foreach ( $checks as $check ) {
 			if ( ! empty( $check['id'] ) ) {

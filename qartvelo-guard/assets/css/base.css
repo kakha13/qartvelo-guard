@@ -311,7 +311,7 @@
 }
 .wpcs-badge--muted {
 	background: #f1f5f9;
-	color: var(--wpcs-muted);
+	color: #475569;
 }
 
 /* ---------- Tabs (use with WP .nav-tab-wrapper) ---------- */
@@ -646,7 +646,12 @@
 	position: absolute;
 	opacity: 0;
 }
-.wpcs-option.is-selected,
+/* Selected card. .is-selected is kept by core.js bindOptionCards() for browsers without :has().
+   Two rules on purpose: a selector list with an unknown pseudo-class is dropped as a whole. */
+.wpcs-option.is-selected {
+	border-color: var(--wpcs-brand-2);
+	box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.15);
+}
 .wpcs-option:has(input:checked) {
 	border-color: var(--wpcs-brand-2);
 	box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.15);
@@ -921,4 +926,60 @@ body.wp-core-ui .wpcs-wrap .button:focus .dashicons,
 /* The hidden attribute always wins over the display rules of buttons, rows and panels. */
 .wpcs-wrap [hidden] {
 	display: none !important;
+}
+
+/* ---------- Reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+	.wpcs-progress.is-indeterminate .wpcs-progress__bar {
+		animation: none;
+		width: 100%;
+		opacity: 0.5;
+	}
+	.wpcs-scanbox.is-running .button-hero .dashicons {
+		animation: none;
+	}
+	.wpcs-wrap *,
+	.wpcs-wrap *::before,
+	.wpcs-wrap *::after,
+	.wpcs-toast {
+		transition-duration: 0.01ms !important;
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+	}
+}
+
+/* ---------- Forced colors (Windows High Contrast) ---------- */
+@media (forced-colors: active) {
+	.wpcs-toggle__track {
+		border: 1px solid ButtonText;
+		background: Canvas;
+		forced-color-adjust: none;
+	}
+	.wpcs-toggle__track::after {
+		background: ButtonText;
+	}
+	.wpcs-toggle input:checked + .wpcs-toggle__track {
+		background: Highlight;
+	}
+	.wpcs-toggle input:checked + .wpcs-toggle__track::after {
+		background: HighlightText;
+	}
+	.wpcs-toggle input:focus-visible + .wpcs-toggle__track {
+		outline-color: Highlight;
+	}
+	.wpcs-option.is-selected {
+		outline: 3px solid Highlight;
+		outline-offset: 2px;
+	}
+	.wpcs-option:has(input:checked) {
+		outline: 3px solid Highlight;
+		outline-offset: 2px;
+	}
+	.wpcs-progress__track {
+		border: 1px solid ButtonText;
+	}
+	.wpcs-progress__bar {
+		background: Highlight;
+		forced-color-adjust: none;
+	}
 }
