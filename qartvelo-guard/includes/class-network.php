@@ -59,6 +59,7 @@ class Network {
 		'wpcybersec_data_move',
 		'wpcybersec_storage_status',
 		'wpcybersec_legacy_move',
+		'wpcybersec_data_token',
 		'wpcybersec_activation_redirect',
 		'wpcybersec_counts',
 	);

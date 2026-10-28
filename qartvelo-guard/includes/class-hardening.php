@@ -86,6 +86,9 @@ class Hardening {
 		if ( $tried > time() - DAY_IN_SECONDS ) {
 			return;
 		}
+		if ( '' === $storage->default_dir() ) {
+			return; // WordPress reports no uploads folder.
+		}
 		Network::update_option( Storage::LEGACY_MOVE_OPTION, time(), true );
 		$this->move_data_dir( $storage->default_dir() );
 	}

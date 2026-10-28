@@ -12,8 +12,8 @@ defined( 'ABSPATH' ) || exit;
 /**
  * Resolves and protects the plugin's data directory.
  *
- * Default: wp-content/uploads/qartvelo-guard (wp-content/wpcybersec before
- * 1.1.0, moved automatically). System administrators can move it outside
+ * Default: a random folder inside wp-content/uploads/qartvelo-guard
+ * (wp-content/wpcybersec before 1.1.0, moved automatically). System administrators can move it outside
  * the web root with define( 'WPCYBERSEC_DATA_DIR', '/var/lib/wpcybersec/site' )
  * in wp-config.php. Works before the plugin is booted (activation hooks).
  */
@@ -60,6 +60,12 @@ class Storage {
 	/** When the move away from the pre-1.1.0 folder was last tried (Hardening::move_legacy_data_dir()). */
 	const LEGACY_MOVE_OPTION = 'wpcybersec_legacy_move';
 
+	/** Random name of the default data folder inside uploads/qartvelo-guard (default_dir()). */
+	const TOKEN_OPTION = 'wpcybersec_data_token';
+
+	/** Folder in uploads that holds the default data folder. */
+	const UPLOADS_FOLDER = 'qartvelo-guard';
+
 	/** @var string Value of the move lock this request holds. */
 	private $lock_value = '';
 
@@ -75,7 +81,7 @@ class Storage {
 	 *   2. a fallback folder inside uploads that is already in use (it keeps
 	 *      being used until the data is moved, so held items stay reachable),
 	 *   3. the folder chosen by the one-click move (option, single sites only),
-	 *   4. wp-content/uploads/qartvelo-guard,
+	 *   4. wp-content/uploads/qartvelo-guard/<random> (default_dir()),
 	 *   5. a new fallback folder wp-content/uploads/qartvelo-guard-<random>.
 	 * When none is writable, status() says "unavailable" and this returns the
 	 * configured folder (ensure() then fails with an explanation).
@@ -89,7 +95,7 @@ class Storage {
 
 	/**
 	 * The folder the configuration asks for, without looking at permissions:
-	 * the constant, else the moved folder, else wp-content/uploads/qartvelo-guard.
+	 * the constant, else the moved folder, else default_dir().
 	 *
 	 * @return string
 	 */
@@ -353,7 +359,7 @@ class Storage {
 			);
 			if ( 'unavailable' === $status['state'] ) {
 				/* translators: %s: folder path */
-				self::log( 'storage_unavailable', sprintf( __( 'No writable data folder: %s is not writable and neither is the uploads folder. Uploads are not held (only uploads that look malicious are blocked) and scans cannot run.', 'qartvelo-guard' ), $status['primary'] ) );
+				self::log( 'storage_unavailable', sprintf( __( 'No writable data folder: %s is not writable and neither is the uploads folder. Uploads are not held (only uploads that look malicious are blocked) and scans cannot run.', 'qartvelo-guard' ), '' !== $status['primary'] ? $status['primary'] : __( 'the uploads folder', 'qartvelo-guard' ) ) );
 			} elseif ( 'fallback' === $status['state'] ) {
 				/* translators: 1: folder in use, 2: configured folder */
 				self::log( 'storage_fallback', sprintf( __( 'Data is kept in %1$s because %2$s is not writable (or the data was kept there before).', 'qartvelo-guard' ), $status['dir'], $status['primary'] ) );
@@ -426,20 +432,53 @@ class Storage {
 	}
 
 	/**
-	 * The default folder: qartvelo-guard inside the uploads folder (the main
-	 * site's uploads folder on multisite, since a sub site's folder is deleted
-	 * with the site). Its files are protected by protect() and the held files
-	 * inside have random names ending in .bin.
+	 * The default folder: a folder with a random 32 character name inside
+	 * qartvelo-guard in the uploads folder (the main site's uploads folder on
+	 * multisite, since a sub site's folder is deleted with the site), for
+	 * example uploads/qartvelo-guard/k3v9.../. The deny files written by
+	 * protect() work on Apache, LiteSpeed and IIS; nginx ignores them, so the
+	 * random name keeps every path unguessable there, and both folders hold an
+	 * index.php so they cannot be listed. Inside, held files also have random
+	 * names ending in .bin.
 	 *
-	 * @return string
+	 * @return string '' when WordPress cannot report the uploads folder.
 	 */
 	public function default_dir() {
 		if ( null === self::$default ) {
 			$base          = self::uploads_basedir();
-			$base          = '' !== $base ? $base : untrailingslashit( wp_normalize_path( WP_CONTENT_DIR ) ) . '/uploads';
-			self::$default = $base . '/qartvelo-guard';
+			self::$default = '' === $base ? '' : $this->private_dir( $base . '/' . self::UPLOADS_FOLDER );
 		}
 		return self::$default;
+	}
+
+	/**
+	 * The random folder inside $root: remembered in TOKEN_OPTION, found again
+	 * through this site's marker file when the option was lost, else new.
+	 *
+	 * @param string $root uploads/qartvelo-guard.
+	 * @return string
+	 */
+	private function private_dir( $root ) {
+		// Version 1.1.0 kept the data in $root itself: keep using it.
+		if ( @is_dir( $root . '/quarantine' ) || @is_dir( $root . '/jobs' ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			return $root;
+		}
+		$token = Network::get_option( self::TOKEN_OPTION, '' );
+		if ( ! is_string( $token ) || ! preg_match( '/^[a-z0-9]{32}$/', $token ) ) {
+			$token = '';
+			$names = @is_dir( $root ) ? @scandir( $root ) : false; // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			foreach ( is_array( $names ) ? $names : array() as $name ) {
+				if ( preg_match( '/^[a-z0-9]{32}$/', $name ) && $this->marker_matches( $root . '/' . $name ) ) {
+					$token = $name;
+					break;
+				}
+			}
+			if ( '' === $token ) {
+				$token = strtolower( wp_generate_password( 32, false, false ) );
+			}
+			Network::update_option( self::TOKEN_OPTION, $token, true );
+		}
+		return $root . '/' . $token;
 	}
 
 	/** @var string|null default_dir() of this request. */
@@ -1609,7 +1648,7 @@ class Storage {
 			return new \WP_Error(
 				'wpcybersec_storage',
 				/* translators: %s: directory path */
-				sprintf( __( 'No writable data folder: %s is not writable for WordPress, and neither is the uploads folder. Make wp-content writable or set WPCYBERSEC_DATA_DIR in wp-config.php to a writable folder.', 'qartvelo-guard' ), $status['primary'] )
+				sprintf( __( 'No writable data folder: %s is not writable for WordPress, and neither is the uploads folder. Make the uploads folder writable or set WPCYBERSEC_DATA_DIR in wp-config.php to a writable folder.', 'qartvelo-guard' ), '' !== $status['primary'] ? $status['primary'] : __( 'the uploads folder', 'qartvelo-guard' ) )
 			);
 		}
 		$dirs = array( $this->data_dir(), $this->quarantine_dir(), $this->jobs_dir(), $this->spool_dir(), $this->guard_dir() );
@@ -1619,6 +1658,10 @@ class Storage {
 				return new \WP_Error( 'wpcybersec_storage', sprintf( __( 'Could not create %s. Check folder permissions.', 'qartvelo-guard' ), $dir ) );
 			}
 			$this->protect( $dir );
+		}
+		// The folder around the random one: no listing, no web access where the server reads the deny files.
+		if ( self::UPLOADS_FOLDER === basename( dirname( $status['dir'] ) ) && preg_match( '/^[a-z0-9]{32}$/', basename( $status['dir'] ) ) ) {
+			$this->protect( dirname( $status['dir'] ) );
 		}
 		// A folder inside uploads is found and removed by uninstall.php through this marker.
 		if ( in_array( $status['source'], array( 'fallback', 'default' ), true ) && ! $this->marker_matches( $status['dir'] ) ) {

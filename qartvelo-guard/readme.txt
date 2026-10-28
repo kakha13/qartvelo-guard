@@ -4,7 +4,7 @@ Tags: security, malware scanner, file integrity, upload, quarantine
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.1.0
+Stable tag: 1.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -93,7 +93,7 @@ Only if you opt in. The setup wizard (Alerts step) and Settings > General offer 
 
 = Where are held files kept? =
 
-In a private folder inside the uploads folder (wp-content/uploads/qartvelo-guard), blocked from web access, with random file names ending in .bin that cannot run as code. Sites upgraded from an earlier version keep their old folder until the plugin moves it there on its own admin pages. The wizard can move this folder outside the web root.
+In a private folder inside the uploads folder: wp-content/uploads/qartvelo-guard/ followed by a random 32 character folder name, so no file in it has a guessable address. Apache, LiteSpeed and IIS also refuse web access through the deny files the plugin writes; nginx ignores those files, so there the random folder name keeps the data private, both folders contain an index.php against folder listings, and Settings > Advanced shows an nginx rule plus a one-click move of the folder outside the web root. Held files inside have random names ending in .bin and cannot run as code. Sites upgraded from a version before 1.1.0 keep their old folder until the plugin moves it on its own admin pages.
 
 == External services ==
 
@@ -125,6 +125,10 @@ Data kept on your site: for every held file the plugin records the uploading use
 8. Recent changes: every recently modified code file and what explains the change.
 
 == Changelog ==
+
+= 1.1.1 =
+* The data folder inside uploads gets a random name (wp-content/uploads/qartvelo-guard/<random>/), so its files have no guessable address on nginx, which ignores .htaccess and web.config.
+* No hard-coded uploads path: when WordPress cannot report the uploads folder, the plugin says so instead of guessing.
 
 = 1.1.0 =
 * New name: Qartvelo Guard. Settings, held files and approvals are kept when you update from an earlier version.

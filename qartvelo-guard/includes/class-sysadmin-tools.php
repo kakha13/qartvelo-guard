@@ -819,7 +819,7 @@ class Sysadmin_Tools {
 				break;
 			case 'reachable':
 				$check['status'] = 'warn';
-				$check['detail'] = __( 'A test file in the quarantine folder could be downloaded. The server ignores the .htaccess deny rules (typical for nginx). Held files cannot run, but they can be downloaded by anyone who guesses their name.', 'qartvelo-guard' );
+				$check['detail'] = __( 'A test file in the quarantine folder could be downloaded. The server ignores the .htaccess deny rules (typical for nginx). Held files cannot run, and the data folder has a random name, so only someone who knows its exact address could download a file. The rule below closes the folder completely.', 'qartvelo-guard' );
 				$check['fix']    = __( 'Add this rule to the nginx server block, or move the data folder outside the web root.', 'qartvelo-guard' );
 				$check['code']   = $this->nginx_data_rule();
 				break;

@@ -33,10 +33,10 @@ function wpcybersec_uninstall_option( $name, $default = '' ) {
  * The data folder, resolved like Storage::data_dir(): WPCYBERSEC_DATA_DIR, else
  * the folder chosen by the one-click move (single sites only), else the
  * pre-1.1.0 wp-content/wpcybersec while it exists, else
- * uploads/qartvelo-guard. Read before the options are deleted.
+ * the random folder inside uploads/qartvelo-guard. Read before the options are deleted.
  */
-// Before 1.1.0 the default folder was wp-content/wpcybersec; it is now
-// qartvelo-guard inside the main site's uploads folder (Storage::default_dir()).
+// Before 1.1.0 the default folder was wp-content/wpcybersec; it is now a
+// random folder inside uploads/qartvelo-guard of the main site (Storage::default_dir()).
 $wpcybersec_legacy = untrailingslashit( wp_normalize_path( WP_CONTENT_DIR ) ) . '/wpcybersec';
 if ( is_multisite() && ! is_main_site() ) {
 	switch_to_blog( get_main_site_id() );
@@ -45,16 +45,24 @@ if ( is_multisite() && ! is_main_site() ) {
 } else {
 	$wpcybersec_uploads = wp_upload_dir( null, false );
 }
-$wpcybersec_default = is_array( $wpcybersec_uploads ) && empty( $wpcybersec_uploads['error'] ) && ! empty( $wpcybersec_uploads['basedir'] )
+$wpcybersec_root    = is_array( $wpcybersec_uploads ) && empty( $wpcybersec_uploads['error'] ) && ! empty( $wpcybersec_uploads['basedir'] )
 	? untrailingslashit( wp_normalize_path( (string) $wpcybersec_uploads['basedir'] ) ) . '/qartvelo-guard'
-	: untrailingslashit( wp_normalize_path( WP_CONTENT_DIR ) ) . '/uploads/qartvelo-guard';
+	: '';
+$wpcybersec_token   = wpcybersec_uninstall_option( 'wpcybersec_data_token', '' );
+if ( '' !== $wpcybersec_root && ( is_dir( $wpcybersec_root . '/quarantine' ) || is_dir( $wpcybersec_root . '/jobs' ) ) ) {
+	$wpcybersec_default = $wpcybersec_root; // Version 1.1.0 kept the data in the folder itself.
+} elseif ( '' !== $wpcybersec_root && is_string( $wpcybersec_token ) && preg_match( '/^[a-z0-9]{32}$/', $wpcybersec_token ) ) {
+	$wpcybersec_default = $wpcybersec_root . '/' . $wpcybersec_token;
+} else {
+	$wpcybersec_default = '';
+}
 $wpcybersec_moved   = is_multisite() ? '' : get_option( 'wpcybersec_data_dir', '' );
 $wpcybersec_moved   = is_string( $wpcybersec_moved ) && '' !== $wpcybersec_moved ? untrailingslashit( wp_normalize_path( $wpcybersec_moved ) ) : '';
 if ( defined( 'WPCYBERSEC_DATA_DIR' ) && WPCYBERSEC_DATA_DIR ) {
 	$wpcybersec_data = untrailingslashit( wp_normalize_path( WPCYBERSEC_DATA_DIR ) );
 } elseif ( '' !== $wpcybersec_moved && is_dir( $wpcybersec_moved ) ) {
 	$wpcybersec_data = $wpcybersec_moved;
-} elseif ( is_dir( $wpcybersec_legacy ) && ! is_dir( $wpcybersec_default ) ) {
+} elseif ( is_dir( $wpcybersec_legacy ) && ( '' === $wpcybersec_default || ! is_dir( $wpcybersec_default ) ) ) {
 	$wpcybersec_data = $wpcybersec_legacy;
 } else {
 	$wpcybersec_data = $wpcybersec_default;
@@ -292,7 +300,7 @@ $wpcybersec_own_name = static function ( $dir ) {
 };
 if ( ! defined( 'WPCYBERSEC_DATA_DIR' ) ) {
 	$wpcybersec_dirs[] = $wpcybersec_legacy;
-	if ( is_dir( $wpcybersec_default ) && ! is_link( $wpcybersec_default ) && $wpcybersec_marker_ok( $wpcybersec_default ) ) {
+	if ( '' !== $wpcybersec_default && is_dir( $wpcybersec_default ) && ! is_link( $wpcybersec_default ) && $wpcybersec_marker_ok( $wpcybersec_default ) ) {
 		$wpcybersec_dirs[] = $wpcybersec_default;
 	}
 	if ( '' !== $wpcybersec_moved && $wpcybersec_moved !== $wpcybersec_default && $wpcybersec_own_name( $wpcybersec_moved ) && is_dir( $wpcybersec_moved ) && ! is_link( $wpcybersec_moved ) && $wpcybersec_marker_ok( $wpcybersec_moved ) ) {
@@ -318,6 +326,16 @@ foreach ( $wpcybersec_dirs as $wpcybersec_dir ) {
 		}
 	}
 	@rmdir( $wpcybersec_dir ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- direct file call: uninstall cannot ask for FTP credentials.
+}
+
+// The uploads/qartvelo-guard folder around the random data folder: only its deny files, then the folder when empty.
+if ( '' !== $wpcybersec_root && $wpcybersec_root !== $wpcybersec_default && is_dir( $wpcybersec_root ) && ! is_link( $wpcybersec_root ) ) {
+	foreach ( array( '.htaccess', 'index.php', 'web.config' ) as $wpcybersec_name ) {
+		if ( is_file( $wpcybersec_root . '/' . $wpcybersec_name ) ) {
+			@unlink( $wpcybersec_root . '/' . $wpcybersec_name ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.unlink_unlink -- direct file call: uninstall cannot ask for FTP credentials.
+		}
+	}
+	@rmdir( $wpcybersec_root ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- only when empty; direct file call: uninstall cannot ask for FTP credentials.
 }
 
 /*
