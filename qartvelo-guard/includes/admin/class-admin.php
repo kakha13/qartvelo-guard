@@ -154,7 +154,8 @@ class Admin {
 
 		add_menu_page(
 			__( 'Qartvelo Guard', 'qartvelo-guard' ),
-			__( 'Qartvelo Guard', 'qartvelo-guard' ),
+			// Short on purpose: the full name plus the count bubble does not fit the 160px menu.
+			__( 'Guard', 'qartvelo-guard' ),
 			self::cap(),
 			self::PAGE_DASHBOARD,
 			array( $dashboard, 'render' ),
@@ -1092,10 +1093,7 @@ class Admin {
 		if ( $counts['pending'] + $counts['threats'] < 1 ) {
 			return;
 		}
-		// The sidebar count sits over the menu icon: next to the name it does not
-		// fit in the 160px menu and drops to a second line.
-		$css = '#adminmenu li.toplevel_page_wpcybersec .wp-menu-name .wpcs-menu-count{position:absolute;top:2px;left:16px;margin:0;min-width:16px;height:16px;padding:0 4px;border-radius:8px;font-size:9px;line-height:16px}'
-			. '#wpadminbar #wp-admin-bar-wpcybersec .ab-icon:before{content:"\f332";top:2px}'
+		$css = '#wpadminbar #wp-admin-bar-wpcybersec .ab-icon:before{content:"\f332";top:2px}'
 			. '#wpadminbar #wp-admin-bar-wpcybersec .wpcs-ab-count{display:inline-block;min-width:18px;height:18px;margin-left:6px;padding:0 5px;border-radius:9px;background:#d63638;color:#fff;font-size:11px;line-height:18px;text-align:center;vertical-align:middle;box-sizing:border-box}'
 			. '#wpadminbar #wp-admin-bar-wpcybersec:not(.wpcs-ab-threats) .wpcs-ab-count{background:#dba617;color:#1d2327}'
 			. '@media screen and (max-width:782px){#wpadminbar #wp-admin-bar-wpcybersec{display:block}#wpadminbar #wp-admin-bar-wpcybersec .ab-label{display:none}#wpadminbar #wp-admin-bar-wpcybersec .ab-icon:before{top:0}}';

@@ -639,7 +639,7 @@ unlink the tmp file, and either answer `403` with the message (`block`) or strip
 Files: `includes/admin/class-admin.php`, `includes/admin/class-dashboard-page.php`,
 `includes/admin/class-reports-page.php`, `assets/css/admin.css`, `assets/js/admin.js`.
 
-- `Admin\Admin::register()`: menu `Qartvelo Guard` (dashicons-shield, position 80, capability
+- `Admin\Admin::register()`: menu `Guard` (page title Qartvelo Guard) (dashicons-shield, position 80, capability
   `Admin::cap()`, count bubble = pending + threats; on `network_admin_menu` on multisite), submenus Dashboard (`wpcybersec`),
   Reports (`wpcybersec-reports`), Settings (`wpcybersec-settings`, rendered by
   `Admin\Settings_Page`), Setup Wizard (`wpcybersec-wizard`, rendered by `Admin\Wizard`).
