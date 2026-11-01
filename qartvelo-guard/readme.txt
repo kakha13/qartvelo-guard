@@ -4,7 +4,7 @@ Tags: security, malware scanner, file integrity, upload, quarantine
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.1.3
+Stable tag: 1.1.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -125,6 +125,9 @@ Data kept on your site: for every held file the plugin records the uploading use
 8. Recent changes: every recently modified code file and what explains the change.
 
 == Changelog ==
+
+= 1.1.4 =
+* Strict level: a new version of Qartvelo Guard installed from a ZIP is held as a normal update waiting for approval, no longer as "code that looks unsafe" because of the plugin's own malware signature file.
 
 = 1.1.3 =
 * Sites that installed version 1.1.0 are moved into the random data folder automatically the next time an administrator opens the plugin (until now they kept wp-content/uploads/qartvelo-guard/ itself).

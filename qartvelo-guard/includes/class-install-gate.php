@@ -923,7 +923,7 @@ class Install_Gate {
 	 * @param string $type    plugin | theme.
 	 * @param string $slug    Package folder name.
 	 * @param string $version Version from the package header.
-	 * @return array [ hits, partial, verified (files whose hits the official checksums cleared), unchanged (files identical to the installed copy) ]
+	 * @return array [ hits, partial, verified (files whose hits the official checksums or, for this plugin's own signature file, the package's checksums.json cleared), unchanged (files identical to the installed copy) ]
 	 */
 	private function scan_package( $dir, $type = '', $slug = '', $version = '' ) {
 		$scanner = wpcybersec()->scanner;
@@ -944,6 +944,11 @@ class Install_Gate {
 		// own signature file, for example, matches the patterns it looks for).
 		$installed = self::installed_dir( $type, $slug );
 		$unchanged = 0;
+		// A new version of this plugin carries a changed signature file, which
+		// matches the very patterns it holds. It is trusted the way the installed
+		// copy is: when it is what the package's own checksums.json says it is.
+		$self = 'plugin' === $type && '' !== (string) $slug && $slug === self::own_slug();
+		$own  = null;
 		$checks   = wpcybersec()->settings ? wpcybersec()->settings->get( 'use_checksums', true ) : true;
 		$map      = ( $checks && 'plugin' === $type && '' !== (string) $slug && '' !== (string) $version && method_exists( $scanner, 'checksum_map' ) ) ? null : false;
 		$scan_ext = array( 'js', 'html', 'htm', 'svg', 'htaccess' );
@@ -981,6 +986,15 @@ class Install_Gate {
 					++$unchanged;
 					continue;
 				}
+				if ( $file_hits && $self && in_array( $rel, self::SELF_PATTERN_FILES, true ) ) {
+					if ( null === $own ) {
+						$own = self::package_checksums( $dir );
+					}
+					if ( isset( $own[ $rel ] ) && @hash_file( 'sha256', $abs ) === $own[ $rel ] ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+						++$verified;
+						continue;
+					}
+				}
 				foreach ( $file_hits as $hit ) {
 					if ( ! is_array( $hit ) ) {
 						continue;
@@ -997,6 +1011,33 @@ class Install_Gate {
 			$partial = true;
 		}
 		return array( $hits, $partial, $verified, $unchanged );
+	}
+
+	/**
+	 * Files of this plugin that hold malware patterns as data, so every scan
+	 * matches them (see scan_package()).
+	 */
+	const SELF_PATTERN_FILES = array( 'includes/class-signatures.php' );
+
+	/**
+	 * The file list of a package's own checksums.json (this plugin ships one).
+	 *
+	 * @param string $dir Package folder.
+	 * @return array<string, string> Relative path => sha256; empty when missing or unreadable.
+	 */
+	private static function package_checksums( $dir ) {
+		$file = untrailingslashit( wp_normalize_path( (string) $dir ) ) . '/checksums.json';
+		if ( ! @is_file( $file ) || @is_link( $file ) || @filesize( $file ) > 2 * MB_IN_BYTES ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			return array();
+		}
+		$data = json_decode( (string) @file_get_contents( $file ), true ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- local file; WP_Filesystem may ask for FTP credentials, which an install request cannot answer.
+		$out  = array();
+		foreach ( isset( $data['files'] ) && is_array( $data['files'] ) ? $data['files'] : array() as $rel => $sha ) {
+			if ( is_string( $rel ) && is_string( $sha ) && preg_match( '/^[a-f0-9]{64}$/', $sha ) ) {
+				$out[ $rel ] = $sha;
+			}
+		}
+		return $out;
 	}
 
 	/**

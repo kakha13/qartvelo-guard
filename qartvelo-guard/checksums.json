@@ -1,5 +1,5 @@
 {
-    "version": "1.1.3",
+    "version": "1.1.4",
     "files": {
         "assets/css/admin.css": "c53e66f8b1b6d73d9ef9879cfe61b702b5d46c2fc943617760e47b831fb480f2",
         "assets/css/base.css": "86767ab1f3156862f608b7823b943532173879e85e118d11a0f279f6c1773b20",
@@ -42,7 +42,7 @@
         "includes/class-guard-manager.php": "c0afd089c7b08b80e3474c516bc1d5582f1aab76a24a7b6fe4e46938ce504d65",
         "includes/class-hardening.php": "0641217e9d70b207dee53d2ec9fb579f906950ea6440be333d587bcc75b373e6",
         "includes/class-hosting.php": "73063f064fbff195641cdda0b7696691019ebbf48e30d1db2992d9694f5c0ced",
-        "includes/class-install-gate.php": "647731fb1b4a9a8a2008e2b38cdcadf1c4285c4474cca80df3e5151e7e16c21c",
+        "includes/class-install-gate.php": "237e88e6bbfd8bb0c2f290cddc957e3d2d4f19b7f56c0db2fb66313daa67d730",
         "includes/class-installer.php": "43e62501f0e197b2e8b3631a4eca368ecf5faf9205831a0b5f934c7d0f52f382",
         "includes/class-logger.php": "bb227f92821fb82af9a5de5b25cc9a40d5bc31a895463c4c9c4d07296b169026",
         "includes/class-network.php": "7d31c80bcf78c4de5056741977439c3ce7070f752fb3c10c68bcf0057ce79e18",
@@ -67,8 +67,8 @@
         "includes/index.php": "bd48c24ce4500e60d2524571756787283f0d3fbfa50b116331309c09773f0cd1",
         "index.php": "bd48c24ce4500e60d2524571756787283f0d3fbfa50b116331309c09773f0cd1",
         "languages/index.php": "bd48c24ce4500e60d2524571756787283f0d3fbfa50b116331309c09773f0cd1",
-        "qartvelo-guard.php": "004a5116130812e2346c3949b76df20c44282bfb19388af931152b0e78beeac7",
-        "readme.txt": "7b9cd956b29bad18396598436f1f0dbfe58d3d23c4bb71ef16707eecad39c4a4",
+        "qartvelo-guard.php": "ec816d5f61e7b3aa25779eb2b67fff001bbe1f82d1492af3e0faf890d3678c75",
+        "readme.txt": "6a2cf9704fe4e7da1d8dfbca563a58e4ebe80f66117aaf1cf6b3040ed43057eb",
         "uninstall.php": "b841aca01ef5e3acd354e2efcced9d93ee3d6d5b7888bb87277eefc9d8e23553"
     }
 }
