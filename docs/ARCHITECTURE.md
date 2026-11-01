@@ -100,7 +100,10 @@ Static helpers: `Paths` (core), `Fs` (core), `Guard_Config` (core), `Installer` 
   `Hardening::move_legacy_data_dir()` moves it away), else the default
   `<main site uploads>/qartvelo-guard/<random 32 chars>` (`default_dir()`, the folder name is kept
   in option `wpcybersec_data_token`), with a new fallback `<main site uploads>/qartvelo-guard-<random 16>`
-  when the default cannot be used.
+  when the default cannot be used. A 1.1.0 install kept the data in `uploads/qartvelo-guard` itself
+  (`flat_in_use()`); `Hardening::move_flat_data_dir()` moves it into the random folder once a day
+  through `relocate( random_dir() )`, which renames the entries in place (`nest_locked()`, move
+  state phase `nest`, the guard folder and spool follow through `finish_nest_locked()`).
   `status()` / `available()`: `{ state ok|fallback|unavailable, dir, primary, source
   constant|moved|default|fallback, primary_ok }`. `check()` (activation, settings and plugin
   pages) re-resolves, stores option `wpcybersec_storage_status` and logs a change;
@@ -212,7 +215,8 @@ Database findings (`Db_Scanner`): options (decoder + eval payloads, document.wri
 fromCharCode + eval; scripts from other sites and hidden iframes only in widget_*, theme_mods_*,
 *custom_html*), posts of every type except revisions/oembed_cache/customize_changeset (publish,
 draft, private, pending, future), and code plugin storage reported as medium "review" findings
-(ihaf_insert_* options, hefo, wpcode posts, {prefix}hfcm_scripts, {prefix}snippets). Chunked by
+(ihaf_insert_* options, hefo, wpcode posts, {prefix}hfcm_scripts, {prefix}snippets, and on multisite
+{base_prefix}ms_snippets once, with the main site). Chunked by
 primary key range; `Scan_Job` runs it in the finishing phase of full and baseline scans, with
 opts `database => true`, and once a day for cron scans. Details: table, key, label, hits
 (redacted snippets), fingerprint, seen_run. A complete run resolves open findings it no longer

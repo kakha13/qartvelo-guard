@@ -220,7 +220,7 @@ class Dashboard_Page {
 			number_format_i18n( $pending ),
 			__( 'Waiting for approval', 'qartvelo-guard' ),
 			$pending > 0
-				? '<a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'pending' ) ) ) . '">' . esc_html__( 'Review on Reports', 'qartvelo-guard' ) . ' &rarr;</a>'
+				? '<a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'pending' ) ) ) . '">' . esc_html__( 'Review on Reports', 'qartvelo-guard' ) . ' <span class="wpcs-arrow" aria-hidden="true">&rarr;</span></a>'
 				: esc_html__( 'Nothing is waiting for you.', 'qartvelo-guard' ),
 			'pending'
 		);
@@ -233,7 +233,7 @@ class Dashboard_Page {
 			number_format_i18n( $threats ),
 			__( 'Threats', 'qartvelo-guard' ),
 			$threats > 0
-				? '<a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'threats' ) ) ) . '">' . esc_html__( 'Review threats', 'qartvelo-guard' ) . ' &rarr;</a>'
+				? '<a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'threats' ) ) ) . '">' . esc_html__( 'Review threats', 'qartvelo-guard' ) . ' <span class="wpcs-arrow" aria-hidden="true">&rarr;</span></a>'
 				: esc_html__( 'No malware found in the last scans.', 'qartvelo-guard' ),
 			'threats'
 		);
@@ -246,7 +246,7 @@ class Dashboard_Page {
 			number_format_i18n( $held ),
 			__( 'In quarantine', 'qartvelo-guard' ),
 			$held > 0
-				? '<a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'quarantine' ) ) ) . '">' . esc_html__( 'See the held files', 'qartvelo-guard' ) . ' &rarr;</a>'
+				? '<a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'quarantine' ) ) ) . '">' . esc_html__( 'See the held files', 'qartvelo-guard' ) . ' <span class="wpcs-arrow" aria-hidden="true">&rarr;</span></a>'
 				: esc_html__( 'No files are held right now.', 'qartvelo-guard' ),
 			'quarantined'
 		);
@@ -320,7 +320,7 @@ class Dashboard_Page {
 		if ( 'ok' === $tone && $this->counts['threats'] > 0 ) {
 			// The last run found nothing new, but earlier findings are still open.
 			$tone  = 'warn';
-			$meta .= ' ' . sprintf(
+			$meta  = rtrim( $meta, '.' ) . '. ' . sprintf(
 				/* translators: %s: number of threats */
 				_n( '%s threat still waits on Reports.', '%s threats still wait on Reports.', $this->counts['threats'], 'qartvelo-guard' ),
 				number_format_i18n( $this->counts['threats'] )
@@ -493,7 +493,7 @@ class Dashboard_Page {
 		echo '</dl>';
 
 		if ( ! empty( $last['new'] ) || ! empty( $last['modified'] ) || ! empty( $last['threats'] ) ) {
-			echo '<p class="wpcs-last-scan__foot"><a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => ! empty( $last['threats'] ) ? 'threats' : 'pending' ) ) ) . '">' . esc_html__( 'See what was found on the Reports page', 'qartvelo-guard' ) . ' &rarr;</a></p>';
+			echo '<p class="wpcs-last-scan__foot"><a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => ! empty( $last['threats'] ) ? 'threats' : 'pending' ) ) ) . '">' . esc_html__( 'See what was found on the Reports page', 'qartvelo-guard' ) . ' <span class="wpcs-arrow" aria-hidden="true">&rarr;</span></a></p>';
 		}
 		echo '</div>';
 	}
@@ -896,7 +896,7 @@ class Dashboard_Page {
 		echo '<div class="wpcs-card wpcs-activity-card">';
 		echo '<div class="wpcs-card__head"><h2 class="wpcs-card__title"><span class="dashicons dashicons-backup" aria-hidden="true"></span>' . esc_html__( 'Recent activity', 'qartvelo-guard' ) . '</h2>';
 		if ( $rows ) {
-			echo '<a class="wpcs-card__link" href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'activity' ) ) ) . '">' . esc_html__( 'View all', 'qartvelo-guard' ) . ' &rarr;</a>';
+			echo '<a class="wpcs-card__link" href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'activity' ) ) ) . '">' . esc_html__( 'View all', 'qartvelo-guard' ) . ' <span class="wpcs-arrow" aria-hidden="true">&rarr;</span></a>';
 		}
 		echo '</div>';
 

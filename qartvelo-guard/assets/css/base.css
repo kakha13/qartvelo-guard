@@ -30,7 +30,8 @@
 	--wpcs-radius-sm: 6px;
 	--wpcs-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.08);
 	--wpcs-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-	margin: 0 20px 0 2px;
+	margin: 0;
+	margin-inline: 2px 20px;
 	color: var(--wpcs-ink);
 	max-width: 1280px;
 }
@@ -85,7 +86,7 @@
 	min-width: 0;
 }
 .wpcs-header__actions {
-	margin-left: auto;
+	margin-inline-start: auto;
 	display: flex;
 	gap: 8px;
 	flex-wrap: nowrap;
@@ -106,14 +107,14 @@
 		max-width: calc(100% - 58px);
 		flex-wrap: wrap;
 		justify-content: flex-start;
-		margin-left: 58px;
+		margin-inline-start: 58px;
 	}
 }
 @media (max-width: 782px) {
 	.wpcs-header__actions {
 		flex-basis: 100%;
 		max-width: 100%;
-		margin-left: 0;
+		margin-inline-start: 0;
 	}
 	.wpcs-header__actions .button {
 		white-space: normal;
@@ -195,13 +196,13 @@
 	overflow: hidden;
 }
 .wpcs-card--accent {
-	border-left: 4px solid var(--wpcs-accent);
+	border-inline-start: 4px solid var(--wpcs-accent);
 }
 .wpcs-card--warn {
-	border-left: 4px solid var(--wpcs-warn);
+	border-inline-start: 4px solid var(--wpcs-warn);
 }
 .wpcs-card--bad {
-	border-left: 4px solid var(--wpcs-bad);
+	border-inline-start: 4px solid var(--wpcs-bad);
 }
 
 /* ---------- Stats ---------- */
@@ -514,7 +515,7 @@
 	content: "";
 	position: absolute;
 	top: 12px;
-	left: -50%;
+	inset-inline-start: -50%; /* Towards the previous step, whichever side that is. */
 	width: 100%;
 	height: 2px;
 	background: var(--wpcs-line-2);
@@ -589,7 +590,7 @@
 .wpcs-code pre {
 	margin: 0;
 	padding: 14px 16px;
-	padding-right: 84px;
+	padding-inline-end: 84px;
 	background: #0b1220;
 	color: #e2e8f0;
 	border-radius: var(--wpcs-radius-sm);
@@ -609,7 +610,7 @@
 .wpcs-code .wpcs-copy {
 	position: absolute;
 	top: 8px;
-	right: 8px;
+	inset-inline-end: 8px;
 	min-height: 26px;
 	line-height: 24px;
 	padding: 0 10px;
@@ -674,7 +675,7 @@
 }
 .wpcs-option ul {
 	margin: 0;
-	padding-left: 16px;
+	padding-inline-start: 16px;
 	list-style: disc;
 	font-size: 12px;
 	color: var(--wpcs-ink-2);
@@ -685,7 +686,7 @@
 .wpcs-option__tag {
 	position: absolute;
 	top: 10px;
-	right: 10px;
+	inset-inline-end: 10px;
 }
 
 /* ---------- Toggle switch ---------- */
@@ -714,7 +715,7 @@
 	content: "";
 	position: absolute;
 	top: 3px;
-	left: 3px;
+	inset-inline-start: 3px;
 	width: 16px;
 	height: 16px;
 	border-radius: 50%;
@@ -727,6 +728,9 @@
 }
 .wpcs-toggle input:checked + .wpcs-toggle__track::after {
 	transform: translateX(16px);
+}
+body.rtl .wpcs-toggle input:checked + .wpcs-toggle__track::after {
+	transform: translateX(-16px);
 }
 .wpcs-toggle input:focus-visible + .wpcs-toggle__track {
 	outline: 2px solid var(--wpcs-brand-2);
@@ -771,7 +775,7 @@
 	margin: 0 0 8px;
 }
 .wpcs-radio-list label .wpcs-sub {
-	margin-left: 24px;
+	margin-inline-start: 24px;
 }
 @media (max-width: 782px) {
 	.wpcs-field {
@@ -834,7 +838,7 @@
 /* ---------- Toast ---------- */
 .wpcs-toast {
 	position: fixed;
-	right: 24px;
+	inset-inline-end: 24px;
 	bottom: 24px;
 	z-index: 100000;
 	max-width: 420px;
@@ -921,6 +925,21 @@ body.wp-core-ui .wpcs-wrap .button:focus .dashicons,
 .wpcs-wrap .button:hover .dashicons-arrow-right-alt2,
 .wpcs-wrap .button:hover .dashicons-arrow-right-alt {
 	transform: translateX(2px);
+}
+/* Right-to-left locales: forward is to the left, so the arrows are mirrored. */
+body.rtl .wpcs-arrow {
+	display: inline-block;
+	transform: scaleX(-1);
+}
+body.rtl .wpcs-wrap .dashicons-arrow-right-alt2,
+body.rtl .wpcs-wrap .dashicons-arrow-right-alt,
+body.rtl .wpcs-wrap .dashicons-arrow-left-alt2,
+body.rtl .wpcs-wrap .dashicons-arrow-left-alt {
+	transform: scaleX(-1);
+}
+body.rtl .wpcs-wrap .button:hover .dashicons-arrow-right-alt2,
+body.rtl .wpcs-wrap .button:hover .dashicons-arrow-right-alt {
+	transform: scaleX(-1) translateX(2px);
 }
 
 /* The hidden attribute always wins over the display rules of buttons, rows and panels. */

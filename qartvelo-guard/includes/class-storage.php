@@ -13,7 +13,8 @@ defined( 'ABSPATH' ) || exit;
  * Resolves and protects the plugin's data directory.
  *
  * Default: a random folder inside wp-content/uploads/qartvelo-guard
- * (wp-content/wpcybersec before 1.1.0, moved automatically). System administrators can move it outside
+ * (wp-content/wpcybersec before 1.1.0 and uploads/qartvelo-guard itself in
+ * 1.1.0, both moved automatically). System administrators can move it outside
  * the web root with define( 'WPCYBERSEC_DATA_DIR', '/var/lib/wpcybersec/site' )
  * in wp-config.php. Works before the plugin is booted (activation hooks).
  */
@@ -57,7 +58,7 @@ class Storage {
 	/** Last storage state seen by check(): { state, dir, primary, time }. */
 	const STATUS_OPTION = 'wpcybersec_storage_status';
 
-	/** When the move away from the pre-1.1.0 folder was last tried (Hardening::move_legacy_data_dir()). */
+	/** When the move away from the folder layout of an older version was last tried (Hardening::move_legacy_data_dir(), move_flat_data_dir()). */
 	const LEGACY_MOVE_OPTION = 'wpcybersec_legacy_move';
 
 	/** Random name of the default data folder inside uploads/qartvelo-guard (default_dir()). */
@@ -453,17 +454,64 @@ class Storage {
 	}
 
 	/**
+	 * The folder inside $root that holds the data: $root itself while it still
+	 * has the layout of version 1.1.0 (Hardening::move_flat_data_dir() moves
+	 * that into the random folder), else token_dir().
+	 *
+	 * @param string $root uploads/qartvelo-guard.
+	 * @return string
+	 */
+	private function private_dir( $root ) {
+		return self::flat_layout( $root ) ? $root : $this->token_dir( $root );
+	}
+
+	/**
+	 * Whether $root holds the data directly, as version 1.1.0 left it.
+	 *
+	 * @param string $root uploads/qartvelo-guard.
+	 * @return bool
+	 */
+	private static function flat_layout( $root ) {
+		return @is_dir( $root . '/quarantine' ) || @is_dir( $root . '/jobs' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+	}
+
+	/**
+	 * Whether this site still keeps its data directly in uploads/qartvelo-guard
+	 * (the layout of version 1.1.0, a path anyone can guess).
+	 *
+	 * @return bool
+	 */
+	public function flat_in_use() {
+		if ( defined( 'WPCYBERSEC_DATA_DIR' ) && WPCYBERSEC_DATA_DIR ) {
+			return false;
+		}
+		$base = self::uploads_basedir();
+		if ( '' === $base ) {
+			return false;
+		}
+		$root = $base . '/' . self::UPLOADS_FOLDER;
+		return $this->data_dir() === $root && self::flat_layout( $root );
+	}
+
+	/**
+	 * The random folder inside uploads/qartvelo-guard, whether the data is
+	 * there yet or not (the target of Hardening::move_flat_data_dir()).
+	 *
+	 * @return string '' when WordPress cannot report the uploads folder.
+	 */
+	public function random_dir() {
+		$base = self::uploads_basedir();
+		return '' === $base ? '' : $this->token_dir( $base . '/' . self::UPLOADS_FOLDER );
+	}
+
+	/**
 	 * The random folder inside $root: remembered in TOKEN_OPTION, found again
 	 * through this site's marker file when the option was lost, else new.
 	 *
 	 * @param string $root uploads/qartvelo-guard.
 	 * @return string
 	 */
-	private function private_dir( $root ) {
-		// Version 1.1.0 kept the data in $root itself: keep using it.
-		if ( @is_dir( $root . '/quarantine' ) || @is_dir( $root . '/jobs' ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
-			return $root;
-		}
+	private function token_dir( $root ) {
 		$token = Network::get_option( self::TOKEN_OPTION, '' );
 		if ( ! is_string( $token ) || ! preg_match( '/^[a-z0-9]{32}$/', $token ) ) {
 			$token = '';
@@ -774,6 +822,9 @@ class Storage {
 				$this->drop_partial_copy( $state['target'] );
 				Network::delete_option( self::MOVE_OPTION );
 				$result = true;
+			} elseif ( $state && 'nest' === $state['phase'] ) {
+				// The guard follows through Guard_Manager::maintain() on the plugin's admin pages.
+				$result = $this->nest_locked( $state['source'], $state['target'], null );
 			} else {
 				$result = $this->finish_move_locked();
 			}
@@ -791,7 +842,7 @@ class Storage {
 	 */
 	public function move_pending() {
 		$state = $this->move_state();
-		return $state && 'switched' === $state['phase'];
+		return $state && in_array( $state['phase'], array( 'switched', 'nest' ), true );
 	}
 
 	/**
@@ -813,7 +864,7 @@ class Storage {
 	/**
 	 * @param string $source Old folder.
 	 * @param string $target New folder.
-	 * @param string $phase  copy | switched.
+	 * @param string $phase  copy | switched | nest.
 	 */
 	private function save_move_state( $source, $target, $phase ) {
 		Network::update_option(
@@ -842,6 +893,9 @@ class Storage {
 		if ( $state && 'switched' === $state['phase'] ) {
 			$finished = $this->finish_move_locked();
 			$state    = null;
+		} elseif ( $state && 'nest' === $state['phase'] ) {
+			$finished = $this->nest_locked( $state['source'], $state['target'], $after_switch );
+			$state    = null;
 		}
 
 		$source = $this->data_dir();
@@ -850,6 +904,9 @@ class Storage {
 		}
 		if ( true !== $finished ) {
 			return is_wp_error( $finished ) ? $finished : new \WP_Error( 'wpcybersec_storage_pending', __( 'An earlier move of the data folder is still being finished. Try again in a few minutes.', 'qartvelo-guard' ) );
+		}
+		if ( self::is_nest( $source, $target ) ) {
+			return $this->nest_locked( $source, $target, $after_switch );
 		}
 		if ( 0 === strpos( trailingslashit( $target ), trailingslashit( $source ) ) ) {
 			return new \WP_Error( 'wpcybersec_storage_nested', __( 'The new folder cannot be inside the current one.', 'qartvelo-guard' ) );
@@ -1006,6 +1063,215 @@ class Storage {
 			return true;
 		}
 		return false;
+	}
+
+	/**
+	 * Whether $target is the random folder inside $source, the data folder of
+	 * version 1.1.0 (uploads/qartvelo-guard itself).
+	 *
+	 * @param string $source Current data folder.
+	 * @param string $target Wanted data folder.
+	 * @return bool
+	 */
+	private static function is_nest( $source, $target ) {
+		return dirname( $target ) === $source && self::UPLOADS_FOLDER === basename( $source ) && (bool) preg_match( '/^[a-z0-9]{32}$/', basename( $target ) );
+	}
+
+	/**
+	 * Moves the data of the 1.1.0 layout into the random folder inside it.
+	 * Both are on the same disk, so every entry is renamed in place (no copy,
+	 * no extra space); quarantine and jobs go last, because default_dir()
+	 * switches to the random folder the moment they have left $source. The
+	 * guard folder is rewritten in the new place by the guard manager and the
+	 * old spool stays until its lines are imported (finish_nest_locked()).
+	 *
+	 * @param string        $source       uploads/qartvelo-guard.
+	 * @param string        $target       Its random sub folder.
+	 * @param callable|null $after_switch Called as ( $source, $target ) after
+	 *                                    the switch (the guard follows); its
+	 *                                    WP_Error is returned and the rest is
+	 *                                    retried on the plugin's admin pages.
+	 * @return bool|\WP_Error True when done, false when the old spool still
+	 *                        holds lines for a retry.
+	 */
+	private function nest_locked( $source, $target, $after_switch ) {
+		if ( ! is_dir( $target ) ) {
+			if ( ! wp_mkdir_p( $target ) ) {
+				/* translators: %s: folder */
+				return new \WP_Error( 'wpcybersec_storage_mkdir', sprintf( __( 'Could not create %s. The parent folder is not writable for WordPress.', 'qartvelo-guard' ), $target ) );
+			}
+			Fs::chmod( $target, @fileperms( $source ) & 0777 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		}
+		if ( ! $this->marker_matches( $target ) && ! $this->write_marker( $target ) ) {
+			/* translators: %s: folder */
+			return new \WP_Error( 'wpcybersec_storage_write', sprintf( __( '%s is not writable for WordPress.', 'qartvelo-guard' ), $target ) );
+		}
+		$import_lock = self::lock_file( $source . '/spool/guard-import.lock', 30 );
+		if ( false === $import_lock ) {
+			return new \WP_Error( 'wpcybersec_storage_busy', __( 'The early guard is importing held uploads right now. Nothing was moved; try again in a minute.', 'qartvelo-guard' ) );
+		}
+		try {
+			$this->save_move_state( $source, $target, 'nest' );
+			Network::update_option( self::TOKEN_OPTION, basename( $target ), true );
+			// Everything but the deny files, the marker, the spool (finish_nest_locked()
+			// imports its lines), the guard folder while the bootstrap still loads
+			// its config from there, and the two folders that mark the old layout.
+			$keep = array_merge( self::DENY_FILES, array( '.', '..', self::MARKER_FILE, basename( $target ), 'spool', 'quarantine', 'jobs' ) );
+			if ( self::guard_uses( $source ) ) {
+				$keep[] = 'guard';
+			}
+			$entries = @scandir( $source ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			if ( ! is_array( $entries ) ) {
+				/* translators: %s: folder */
+				return new \WP_Error( 'wpcybersec_storage_move', sprintf( __( '%s could not be read.', 'qartvelo-guard' ), $source ) );
+			}
+			foreach ( array_merge( array_values( array_diff( $entries, $keep ) ), array( 'quarantine', 'jobs' ) ) as $entry ) {
+				if ( ! file_exists( $source . '/' . $entry ) && ! is_link( $source . '/' . $entry ) ) {
+					continue;
+				}
+				$moved = $this->merge_move( $source . '/' . $entry, $target . '/' . $entry );
+				if ( is_wp_error( $moved ) ) {
+					return $moved; // Retried on the plugin's admin pages; until quarantine and jobs have moved, the data folder is still $source.
+				}
+				$this->beat_move_lock();
+			}
+			Fs::delete( $source . '/' . self::MARKER_FILE );
+			self::reset();
+			$this->ensure();
+			$this->rewrite_item_paths( $source, $target );
+		} finally {
+			self::unlock_file( $import_lock );
+		}
+
+		if ( is_callable( $after_switch ) ) {
+			$after = call_user_func( $after_switch, $source, $target );
+			if ( is_wp_error( $after ) ) {
+				$this->keep_guard_config( $source, $target );
+				return $after;
+			}
+		}
+		return $this->finish_nest_locked( $source, $target );
+	}
+
+	/**
+	 * Last step of nest_locked(): imports what the old spool still holds and
+	 * removes the old guard and spool folders, once the guard bootstrap no
+	 * longer loads its config from the old place.
+	 *
+	 * @param string $source Old folder (uploads/qartvelo-guard).
+	 * @param string $target New folder inside it.
+	 * @return bool|\WP_Error True when done, false when files are left for a retry.
+	 */
+	private function finish_nest_locked( $source, $target ) {
+		if ( self::guard_uses( $source ) ) {
+			// Guard_Manager::maintain() rewrites the bootstrap on the plugin's admin
+			// pages; until then a copy of the current config keeps the guard working.
+			$this->keep_guard_config( $source, $target );
+			return new \WP_Error( 'wpcybersec_storage_guard', __( 'The early guard file still points to the old data folder, so the old folder is kept until the guard is updated.', 'qartvelo-guard' ) );
+		}
+		$import_lock = self::lock_file( $source . '/spool/guard-import.lock', 30 );
+		if ( false === $import_lock ) {
+			return new \WP_Error( 'wpcybersec_storage_busy', __( 'The early guard is importing held uploads from the old folder right now.', 'qartvelo-guard' ) );
+		}
+		$left = 0;
+		try {
+			$moved = $this->migrate_spool( $source, $target );
+			if ( is_wp_error( $moved ) ) {
+				return $moved;
+			}
+			if ( is_dir( $source . '/guard' ) ) {
+				Fs::delete_tree( $source . '/guard' ); // Written again in the new folder by the guard manager.
+			}
+			if ( is_dir( $source . '/spool' ) ) {
+				$left = self::remove_copied( $source . '/spool', $target . '/spool', 'spool' );
+			}
+		} finally {
+			self::unlock_file( $import_lock );
+		}
+		if ( 0 === $left ) {
+			Fs::delete( $source . '/spool/guard-import.lock' );
+			Fs::rmdir( $source . '/spool' );
+			Network::delete_option( self::MOVE_OPTION );
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * While the guard bootstrap still loads <old folder>/guard/config.php,
+	 * that file gets the content of the current config, which names the new
+	 * folders, so the guard keeps working until the bootstrap is rewritten.
+	 *
+	 * @param string $source Old folder.
+	 * @param string $target New folder.
+	 */
+	private function keep_guard_config( $source, $target ) {
+		$current = $target . '/guard/config.php';
+		$copy    = $source . '/guard/config.php';
+		if ( ! is_file( $current ) || false === strpos( (string) @file_get_contents( $current, false, null, 0, 65536 ), $target . '/' ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- local file; WP_Filesystem may ask for FTP credentials, which a scan or cron run cannot answer.
+			return; // Not written for the new folder yet (Guard_Manager::maintain() does that).
+		}
+		if ( is_file( $copy ) && @md5_file( $copy ) === @md5_file( $current ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			return;
+		}
+		if ( is_dir( $source . '/guard' ) || wp_mkdir_p( $source . '/guard' ) ) {
+			$this->protect( $source . '/guard' );
+			Fs::copy( $current, $copy );
+		}
+	}
+
+	/**
+	 * Moves $from to $to on the same disk by renaming. A folder that exists on
+	 * both sides is merged entry by entry; a file that exists on both sides
+	 * (a move resumed after its request died) keeps the newer one. Symlinks
+	 * are removed, never followed.
+	 *
+	 * @param string $from Source.
+	 * @param string $to   Destination.
+	 * @return true|\WP_Error
+	 */
+	private function merge_move( $from, $to ) {
+		if ( is_link( $from ) ) {
+			Fs::delete( $from );
+			return true;
+		}
+		if ( ! file_exists( $to ) && ! is_link( $to ) ) {
+			if ( Fs::rename( $from, $to ) ) {
+				return true;
+			}
+			/* translators: 1: file or folder, 2: folder */
+			return new \WP_Error( 'wpcybersec_storage_move', sprintf( __( 'Could not move %1$s into %2$s.', 'qartvelo-guard' ), $from, dirname( $to ) ) );
+		}
+		if ( is_dir( $from ) && is_dir( $to ) && ! is_link( $to ) ) {
+			$entries = @scandir( $from ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			if ( ! is_array( $entries ) ) {
+				/* translators: %s: folder */
+				return new \WP_Error( 'wpcybersec_storage_move', sprintf( __( '%s could not be read.', 'qartvelo-guard' ), $from ) );
+			}
+			foreach ( array_diff( $entries, array( '.', '..' ) ) as $entry ) {
+				$moved = $this->merge_move( $from . '/' . $entry, $to . '/' . $entry );
+				if ( is_wp_error( $moved ) ) {
+					return $moved;
+				}
+			}
+			Fs::rmdir( $from );
+			return true;
+		}
+		if ( is_file( $from ) && is_file( $to ) ) {
+			if ( @filemtime( $from ) > @filemtime( $to ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+				Fs::delete( $to );
+				if ( ! Fs::rename( $from, $to ) ) {
+					/* translators: 1: file, 2: folder */
+					return new \WP_Error( 'wpcybersec_storage_move', sprintf( __( 'Could not move %1$s into %2$s.', 'qartvelo-guard' ), $from, dirname( $to ) ) );
+				}
+			} elseif ( ! Fs::delete( $from ) ) {
+				/* translators: %s: file */
+				return new \WP_Error( 'wpcybersec_storage_move', sprintf( __( 'Could not remove %s.', 'qartvelo-guard' ), $from ) );
+			}
+			return true;
+		}
+		/* translators: 1: file or folder, 2: file or folder */
+		return new \WP_Error( 'wpcybersec_storage_move', sprintf( __( 'Could not move %1$s: %2$s is in the way.', 'qartvelo-guard' ), $from, $to ) );
 	}
 
 	/**
@@ -1389,8 +1655,8 @@ class Storage {
 			foreach ( $rows as $row ) {
 				$last = (int) $row['id'];
 				$path = wp_normalize_path( (string) $row['quarantine_path'] );
-				if ( 0 !== strpos( $path, $from . '/' ) ) {
-					continue; // LIKE ignores case; the prefix must match exactly.
+				if ( 0 !== strpos( $path, $from . '/' ) || 0 === strpos( $path, $to . '/' ) ) {
+					continue; // LIKE ignores case; the prefix must match exactly. Or already rewritten: the new folder is inside the old one (nest_locked()).
 				}
 				// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 				$wpdb->update( $table, array( 'quarantine_path' => $to . substr( $path, strlen( $from ) ) ), array( 'id' => $last ), array( '%s' ), array( '%d' ) );

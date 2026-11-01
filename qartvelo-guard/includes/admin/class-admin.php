@@ -877,7 +877,7 @@ class Admin {
 						?>
 					</a>
 				<?php endif; ?>
-				<a class="button-link" style="margin-left:8px" href="<?php echo esc_url( self::dismiss_url( 'storage' ) ); ?>"><?php esc_html_e( 'Hide until this changes', 'qartvelo-guard' ); ?></a>
+				<a class="button-link" style="margin-inline-start:8px" href="<?php echo esc_url( self::dismiss_url( 'storage' ) ); ?>"><?php esc_html_e( 'Hide until this changes', 'qartvelo-guard' ); ?></a>
 			</p>
 		</div>
 		<?php
@@ -935,7 +935,7 @@ class Admin {
 			</p>
 			<p>
 				<a class="button button-primary" href="<?php echo esc_url( self::page_url( self::PAGE_WIZARD ) ); ?>"><?php esc_html_e( 'Start the setup wizard', 'qartvelo-guard' ); ?></a>
-				<a class="button-link" style="margin-left:8px" href="<?php echo esc_url( self::dismiss_url( 'setup' ) ); ?>"><?php esc_html_e( 'Remind me in 3 days', 'qartvelo-guard' ); ?></a>
+				<a class="button-link" style="margin-inline-start:8px" href="<?php echo esc_url( self::dismiss_url( 'setup' ) ); ?>"><?php esc_html_e( 'Remind me in 3 days', 'qartvelo-guard' ); ?></a>
 			</p>
 		</div>
 		<?php
@@ -972,7 +972,7 @@ class Admin {
 			</p>
 			<p>
 				<a class="button button-primary" href="<?php echo esc_url( self::page_url( self::PAGE_REPORTS, array( 'tab' => $tab ) ) ); ?>"><?php esc_html_e( 'Review now', 'qartvelo-guard' ); ?></a>
-				<a class="button-link" style="margin-left:8px" href="<?php echo esc_url( self::dismiss_url( 'pending' ) ); ?>"><?php esc_html_e( 'Hide until something new arrives', 'qartvelo-guard' ); ?></a>
+				<a class="button-link" style="margin-inline-start:8px" href="<?php echo esc_url( self::dismiss_url( 'pending' ) ); ?>"><?php esc_html_e( 'Hide until something new arrives', 'qartvelo-guard' ); ?></a>
 			</p>
 		</div>
 		<?php
@@ -1094,7 +1094,7 @@ class Admin {
 			return;
 		}
 		$css = '#wpadminbar #wp-admin-bar-wpcybersec .ab-icon:before{content:"\f332";top:2px}'
-			. '#wpadminbar #wp-admin-bar-wpcybersec .wpcs-ab-count{display:inline-block;min-width:18px;height:18px;margin-left:6px;padding:0 5px;border-radius:9px;background:#d63638;color:#fff;font-size:11px;line-height:18px;text-align:center;vertical-align:middle;box-sizing:border-box}'
+			. '#wpadminbar #wp-admin-bar-wpcybersec .wpcs-ab-count{display:inline-block;min-width:18px;height:18px;margin-inline-start:6px;padding:0 5px;border-radius:9px;background:#d63638;color:#fff;font-size:11px;line-height:18px;text-align:center;vertical-align:middle;box-sizing:border-box}'
 			. '#wpadminbar #wp-admin-bar-wpcybersec:not(.wpcs-ab-threats) .wpcs-ab-count{background:#dba617;color:#1d2327}'
 			. '@media screen and (max-width:782px){#wpadminbar #wp-admin-bar-wpcybersec{display:block}#wpadminbar #wp-admin-bar-wpcybersec .ab-label{display:none}#wpadminbar #wp-admin-bar-wpcybersec .ab-icon:before{top:0}}';
 		wp_add_inline_style( 'admin-bar', $css );

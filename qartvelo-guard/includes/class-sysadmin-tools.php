@@ -1418,25 +1418,98 @@ class Sysadmin_Tools {
 			return $check;
 		}
 		$mode = substr( sprintf( '%o', $perms ), -4 );
-		$cmd  = 'chmod 640 ' . self::shell_arg( $file );
+		$fix  = self::wp_config_fix( $file );
 		if ( $perms & 0002 ) {
 			$check['status'] = 'fail';
 			/* translators: %s: permission bits, e.g. 0666 */
 			$check['detail'] = sprintf( __( 'wp-config.php is writable by every user on the server (%s).', 'qartvelo-guard' ), $mode );
-			$check['fix']    = __( 'Restrict it (use 600 when PHP runs as the file owner):', 'qartvelo-guard' );
-			$check['code']   = $cmd;
+			$check['fix']    = $fix['text'];
+			$check['code']   = $fix['code'];
 		} elseif ( $perms & 0004 ) {
 			$check['status'] = 'warn';
 			/* translators: %s: permission bits, e.g. 0644 */
 			$check['detail'] = sprintf( __( 'wp-config.php is readable by every user on the server (%s). It holds the database password.', 'qartvelo-guard' ), $mode );
-			$check['fix']    = __( 'Restrict it (use 600 when PHP runs as the file owner):', 'qartvelo-guard' );
-			$check['code']   = $cmd;
+			$check['fix']    = $fix['text'];
+			$check['code']   = $fix['code'];
 		} else {
 			$check['status'] = 'pass';
 			/* translators: %s: permission bits, e.g. 0640 */
 			$check['detail'] = sprintf( __( 'Not readable by other users (%s).', 'qartvelo-guard' ), $mode );
 		}
 		return $check;
+	}
+
+	/**
+	 * How PHP reaches $file: 'owner' (it runs as the file's owner), 'group'
+	 * (only through the file's group), 'other' (neither, so it reads the file
+	 * through the permission for everyone else), or '' when the server does
+	 * not tell (Windows, no posix functions).
+	 *
+	 * @param string $file Absolute path.
+	 * @return string
+	 */
+	public static function php_access( $file ) {
+		if ( '\\' === DIRECTORY_SEPARATOR || ! function_exists( 'posix_geteuid' ) || ! function_exists( 'posix_getegid' ) ) {
+			return '';
+		}
+		$stat = @stat( $file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		if ( ! is_array( $stat ) ) {
+			return '';
+		}
+		if ( (int) $stat['uid'] === posix_geteuid() ) {
+			return 'owner';
+		}
+		$groups   = function_exists( 'posix_getgroups' ) ? (array) @posix_getgroups() : array(); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		$groups[] = posix_getegid();
+		return in_array( (int) $stat['gid'], array_map( 'intval', $groups ), true ) ? 'group' : 'other';
+	}
+
+	/**
+	 * The permission advice for wp-config.php on this server: the strictest
+	 * mode that keeps PHP reading the file, the command, the sentence before
+	 * the command ('text') and the same as a plain sentence ('why').
+	 *
+	 * @param string $file wp-config.php ('' when unknown: generic advice).
+	 * @return array { access, mode, code, text, why }
+	 */
+	public static function wp_config_fix( $file ) {
+		$arg    = self::shell_arg( '' !== $file ? $file : 'wp-config.php' );
+		$access = '' !== $file ? self::php_access( $file ) : '';
+		switch ( $access ) {
+			case 'owner':
+				return array(
+					'access' => $access,
+					'mode'   => '600',
+					'code'   => 'chmod 600 ' . $arg,
+					'text'   => __( 'PHP runs as the owner of the file, so only the owner needs to read it:', 'qartvelo-guard' ),
+					'why'    => __( 'PHP runs as the owner of the file, so 600 (owner only) is enough.', 'qartvelo-guard' ),
+				);
+			case 'group':
+				return array(
+					'access' => $access,
+					'mode'   => '640',
+					'code'   => 'chmod 640 ' . $arg,
+					'text'   => __( 'PHP reads the file through its group, so the owner and the group keep access:', 'qartvelo-guard' ),
+					'why'    => __( 'PHP reads the file through its group, so 640 keeps the owner and the group and shuts out everyone else.', 'qartvelo-guard' ),
+				);
+			case 'other':
+				$group = function_exists( 'posix_getgrgid' ) ? @posix_getgrgid( posix_getegid() ) : false; // phpcs:ignore WordPress.PHP.NoSilencedErrors
+				$group = is_array( $group ) && ! empty( $group['name'] ) && preg_match( '/^[A-Za-z0-9._-]{1,32}$/', $group['name'] ) ? $group['name'] : Developer_Instructions::web_user();
+				return array(
+					'access' => $access,
+					'mode'   => '640',
+					'code'   => 'chgrp ' . $group . ' ' . $arg . "\nchmod 640 " . $arg,
+					'text'   => __( 'PHP runs as a user that neither owns the file nor is in its group, so it reads the file only through the permission for everyone else, and a stricter permission alone would take the site down. As root, put the file in the web server\'s group first, then restrict it:', 'qartvelo-guard' ),
+					'why'    => __( 'PHP runs as a user that neither owns the file nor is in its group, so it reads the file only through the permission for everyone else. A stricter permission alone would take the site down: the file must be in the web server\'s group first (chgrp), then 640 works.', 'qartvelo-guard' ),
+				);
+		}
+		return array(
+			'access' => '',
+			'mode'   => '640',
+			'code'   => 'chmod 640 ' . $arg,
+			'text'   => __( 'Restrict it (use 600 when PHP runs as the file owner):', 'qartvelo-guard' ),
+			'why'    => __( 'Use 600 when PHP runs as the owner of the file, 640 when it reads the file through its group.', 'qartvelo-guard' ),
+		);
 	}
 
 	/**

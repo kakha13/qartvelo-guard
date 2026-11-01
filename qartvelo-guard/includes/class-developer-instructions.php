@@ -384,12 +384,13 @@ class Developer_Instructions {
 				$entry['title'] = __( 'Restrict wp-config.php', 'qartvelo-guard' );
 				$config         = Config_Editor::path();
 				if ( '' !== $config ) {
+					$fix            = Sysadmin_Tools::wp_config_fix( $config );
 					$entry['steps'] = array(
 						array(
-							'text' => __( 'As the owner of the file (or root), run:', 'qartvelo-guard' ),
-							'code' => 'chmod 640 ' . Sysadmin_Tools::shell_arg( $config ),
+							'text' => 'other' === $fix['access'] ? __( 'As root, run:', 'qartvelo-guard' ) : __( 'As the owner of the file (or root), run:', 'qartvelo-guard' ),
+							'code' => $fix['code'],
 						),
-						array( 'text' => __( 'Use 600 instead when PHP runs as the owner of the file.', 'qartvelo-guard' ) ),
+						array( 'text' => $fix['why'] ),
 					);
 				}
 				break;

@@ -187,7 +187,7 @@
 	position: absolute;
 	top: 0;
 	bottom: 0;
-	left: 0;
+	inset-inline-start: 0;
 	width: 3px;
 	background: transparent;
 }
@@ -385,7 +385,7 @@
 	flex-direction: column;
 	align-items: flex-end;
 	gap: 6px;
-	text-align: right;
+	text-align: end;
 }
 .wpcs-plist__state a {
 	font-size: 12px;
@@ -465,7 +465,7 @@
 .wpcs-steps-list li {
 	position: relative;
 	margin: 0 0 12px;
-	padding-left: 34px;
+	padding-inline-start: 34px;
 	color: var(--wpcs-ink-2);
 	line-height: 1.5;
 }
@@ -477,7 +477,7 @@
 	content: counter(wpcs-help);
 	position: absolute;
 	top: 0;
-	left: 0;
+	inset-inline-start: 0;
 	width: 22px;
 	height: 22px;
 	border-radius: 50%;
@@ -579,8 +579,7 @@
 }
 .wpcs-wrap .wpcs-table .wpcs-cb-cell {
 	width: 22px;
-	padding-left: 14px;
-	padding-right: 4px;
+	padding-inline: 14px 4px;
 }
 .wpcs-cb-cell input[type="checkbox"] {
 	margin: 2px 0 0;
@@ -650,7 +649,7 @@
 
 /* Type badges. */
 .wpcs-type {
-	padding-left: 6px;
+	padding-inline-start: 6px;
 }
 .wpcs-type--upload {
 	background: var(--wpcs-info-soft);
@@ -795,7 +794,8 @@
 
 /* Details row. */
 .wpcs-wrap .wpcs-items tr.wpcs-details-row > td {
-	padding: 0 16px 14px 46px;
+	padding: 0 0 14px;
+	padding-inline: 46px 16px;
 	border-top: 0;
 	background: #fbfcfe;
 }
@@ -877,7 +877,7 @@
 .wpcs-pagination .page-numbers {
 	display: inline-block;
 	min-width: 30px;
-	margin-left: 4px;
+	margin-inline-start: 4px;
 	padding: 0 8px;
 	border: 1px solid var(--wpcs-line-2);
 	border-radius: 4px;
@@ -914,7 +914,7 @@
 }
 .wpcs-allowlist .column-remove {
 	width: 110px;
-	text-align: right;
+	text-align: end;
 }
 .wpcs-allowlist td,
 .wpcs-activity-table td {
@@ -936,7 +936,8 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
-	padding: 2px 9px 2px 6px;
+	padding: 2px 0;
+	padding-inline: 6px 9px;
 	border-radius: 999px;
 	background: #f1f5f9;
 	color: var(--wpcs-ink-2);
@@ -1157,7 +1158,7 @@
 .wpcs-diffstat {
 	display: inline-flex;
 	gap: 6px;
-	margin-left: 4px;
+	margin-inline-start: 4px;
 	font-family: var(--wpcs-mono);
 	font-size: 12px;
 	font-weight: 700;
@@ -1180,8 +1181,14 @@
 	border-radius: 3px 0 0 3px;
 }
 .wpcs-wrap .wpcs-segmented .button:last-child {
-	margin-left: -1px;
+	margin-inline-start: -1px;
 	border-radius: 0 3px 3px 0;
+}
+body.rtl .wpcs-wrap .wpcs-segmented .button:first-child {
+	border-radius: 0 3px 3px 0;
+}
+body.rtl .wpcs-wrap .wpcs-segmented .button:last-child {
+	border-radius: 3px 0 0 3px;
 }
 .wpcs-wrap .wpcs-segmented .button.is-active {
 	position: relative; /* Its border stays on top of the neighbour's. */
@@ -1230,21 +1237,21 @@
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 	font-size: 12px;
 	font-weight: 600;
-	text-align: left;
+	text-align: start;
 	text-transform: none;
 	letter-spacing: 0;
 	overflow-wrap: anywhere;
 }
 .wpcs-diff thead th.wpcs-diff__title--del {
 	color: var(--wpcs-bad);
-	border-right: 1px solid var(--wpcs-line);
+	border-inline-end: 1px solid var(--wpcs-line);
 }
 .wpcs-diff thead th.wpcs-diff__title--add {
 	color: var(--wpcs-ok);
 }
 .wpcs-diff__label {
 	display: inline-block;
-	margin-right: 18px;
+	margin-inline-end: 18px;
 }
 .wpcs-diff__label--del {
 	color: var(--wpcs-bad);
@@ -1269,10 +1276,10 @@
 .wpcs-wrap .wpcs-diff td.wpcs-ln,
 .wpcs-wrap .wpcs-codeview td.wpcs-ln {
 	padding: 0 8px;
-	border-right: 1px solid var(--wpcs-line);
+	border-inline-end: 1px solid var(--wpcs-line);
 	background: var(--wpcs-bg);
 	color: #94a3b8;
-	text-align: right;
+	text-align: end;
 	-webkit-user-select: none;
 	user-select: none;
 	font-variant-numeric: tabular-nums;
@@ -1289,7 +1296,8 @@
 .wpcs-wrap .wpcs-diff td.wpcs-code,
 .wpcs-wrap .wpcs-codeview td.wpcs-code {
 	position: relative;
-	padding: 0 12px 0 24px;
+	padding: 0;
+	padding-inline: 24px 12px;
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 	word-break: break-word;
@@ -1297,10 +1305,10 @@
 	tab-size: 4;
 }
 .wpcs-wrap .wpcs-codeview td.wpcs-code {
-	padding-left: 12px;
+	padding-inline-start: 12px;
 }
 .wpcs-diff--split td.wpcs-code + td.wpcs-ln {
-	border-left: 1px solid var(--wpcs-line);
+	border-inline-start: 1px solid var(--wpcs-line);
 }
 .wpcs-wrap .wpcs-diff td.diff-deletedline {
 	background: #fff1f2;
@@ -1312,7 +1320,7 @@
 .wpcs-wrap .wpcs-diff td.diff-addedline::before {
 	position: absolute;
 	top: 0;
-	left: 8px;
+	inset-inline-start: 8px;
 	-webkit-user-select: none;
 	user-select: none;
 }
@@ -1374,7 +1382,7 @@
 	border-top: 0;
 }
 .wpcs-diff-hunk__range {
-	margin-right: 10px;
+	margin-inline-end: 10px;
 	font-weight: 600;
 }
 .wpcs-diff-hunk__skip {
@@ -1520,13 +1528,13 @@
 }
 @media (max-width: 782px) {
 	.wpcs-wrap {
-		margin-right: 12px;
+		margin-inline-end: 12px;
 	}
 	.wpcs-header {
 		flex-wrap: wrap;
 	}
 	.wpcs-header__actions {
-		margin-left: 0;
+		margin-inline-start: 0;
 		width: 100%;
 	}
 	.wpcs-stats,
@@ -1565,7 +1573,8 @@
 	.wpcs-wrap .wpcs-items tr.wpcs-item > .wpcs-cb-cell {
 		grid-column: 1;
 		grid-row: 1 / span 6;
-		padding: 12px 0 0 12px;
+		padding: 12px 0 0;
+		padding-inline-start: 12px;
 	}
 	.wpcs-wrap .wpcs-items tr.wpcs-item > .column-type {
 		padding-top: 12px;
@@ -1630,14 +1639,15 @@
 		padding: 0 4px;
 	}
 	.wpcs-wrap .wpcs-diff td.wpcs-code {
-		padding: 0 6px 0 16px;
+		padding: 0;
+		padding-inline: 16px 6px;
 	}
 	.wpcs-wrap .wpcs-codeview td.wpcs-code {
 		padding: 0 6px;
 	}
 	.wpcs-wrap .wpcs-diff td.diff-deletedline::before,
 	.wpcs-wrap .wpcs-diff td.diff-addedline::before {
-		left: 5px;
+		inset-inline-start: 5px;
 	}
 	.wpcs-diff-head {
 		padding: 14px 14px 12px;
@@ -1714,7 +1724,8 @@
 	overflow-wrap: anywhere;
 }
 .wpcs-dialog__body {
-	padding: 4px 20px 4px 54px;
+	padding: 4px 0;
+	padding-inline: 54px 20px;
 	font-size: 13px;
 	line-height: 1.55;
 }
@@ -1744,7 +1755,7 @@
 }
 @media (max-width: 600px) {
 	.wpcs-dialog__body {
-		padding-left: 20px;
+		padding-inline-start: 20px;
 	}
 	.wpcs-dialog__actions .button {
 		flex: 1 1 auto;
@@ -1919,14 +1930,15 @@
 	margin-top: 10px;
 }
 .wpcs-core-card .wpcs-howto {
-	margin: 8px 0 0 18px;
+	margin: 8px 0 0;
+	margin-inline-start: 18px;
 	padding: 0;
 	font-size: 13px;
 	color: var(--wpcs-ink-2);
 }
 .wpcs-core-card .wpcs-howto li {
 	margin: 0 0 8px;
-	padding-left: 2px;
+	padding-inline-start: 2px;
 }
 .wpcs-core-card .wpcs-howto .wpcs-code {
 	margin: 6px 0 4px;
@@ -1938,4 +1950,20 @@
 	cursor: pointer;
 	font-weight: 600;
 	color: var(--wpcs-brand-2);
+}
+
+/* Right-to-left locales: the accent bars drawn with an inset shadow move to the start side. */
+body.rtl .wpcs-items tr.wpcs-sev-3 > .wpcs-cb-cell,
+body.rtl .wpcs-wrap .wpcs-codeview tr.is-hit td.wpcs-code,
+body.rtl .wpcs-recent tr.is-unexplained > td:first-child {
+	box-shadow: inset -3px 0 0 var(--wpcs-bad);
+}
+body.rtl .wpcs-items tr.wpcs-sev-2 > .wpcs-cb-cell {
+	box-shadow: inset -3px 0 0 #f87171;
+}
+body.rtl .wpcs-change-item.wpcs-sev-3 {
+	box-shadow: inset -3px 0 0 var(--wpcs-bad), var(--wpcs-shadow);
+}
+body.rtl .wpcs-change-item.wpcs-sev-2 {
+	box-shadow: inset -3px 0 0 #f87171, var(--wpcs-shadow);
 }

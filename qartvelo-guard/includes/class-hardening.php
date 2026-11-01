@@ -65,6 +65,7 @@ class Hardening {
 			$storage->resume_move();
 		}
 		$this->move_legacy_data_dir();
+		$this->move_flat_data_dir();
 		Config_Editor::secure_backups();
 	}
 
@@ -100,6 +101,55 @@ class Hardening {
 				array( 'from' => $storage->legacy_dir(), 'to' => $storage->default_dir() )
 			);
 		}
+	}
+
+	/**
+	 * Version 1.1.0 kept the data directly in uploads/qartvelo-guard, a path
+	 * anyone can guess. Moves it into the random folder inside (the layout
+	 * since 1.1.1) by renaming, tried at most once a day on the plugin's own
+	 * admin pages. Multisite networks and folders set with WPCYBERSEC_DATA_DIR
+	 * are left alone.
+	 */
+	private function move_flat_data_dir() {
+		$plugin  = wpcybersec();
+		$storage = $plugin->storage;
+		if ( is_multisite() || ! is_object( $storage ) || ! method_exists( $storage, 'flat_in_use' ) || ! $storage->flat_in_use() || Network::get_option( Storage::MOVE_OPTION ) ) {
+			return;
+		}
+		$tried = (int) Network::get_option( Storage::LEGACY_MOVE_OPTION, 0 );
+		if ( $tried > time() - DAY_IN_SECONDS ) {
+			return;
+		}
+		$job = is_object( $plugin->scan_job ) && method_exists( $plugin->scan_job, 'status' ) ? $plugin->scan_job->status() : array();
+		if ( isset( $job['state'] ) && in_array( $job['state'], array( 'enumerating', 'processing', 'finishing' ), true ) ) {
+			return; // The scan keeps its job files in the data folder: next page view.
+		}
+		$target = $storage->random_dir();
+		if ( '' === $target ) {
+			return; // WordPress reports no uploads folder.
+		}
+		Network::update_option( Storage::LEGACY_MOVE_OPTION, time(), true );
+		$source = $storage->data_dir();
+		$moved  = $this->move_data_dir( $target );
+		if ( ! $plugin->logger ) {
+			return;
+		}
+		if ( is_wp_error( $moved ) ) {
+			// Tried again tomorrow; the activity log says why it did not happen today.
+			$plugin->logger->log(
+				'data_dir_move',
+				/* translators: 1: old folder, 2: error message */
+				sprintf( __( 'The data folder %1$s could not be moved into its random sub folder yet: %2$s', 'qartvelo-guard' ), $source, $moved->get_error_message() ),
+				array( 'from' => $source, 'to' => $target )
+			);
+			return;
+		}
+		$plugin->logger->log(
+			'data_dir_move',
+			/* translators: 1: old folder, 2: new folder */
+			sprintf( __( 'The data folder %1$s was moved into %2$s, a folder with a random name that nobody can guess.', 'qartvelo-guard' ), $source, $target ),
+			array( 'from' => $source, 'to' => $target )
+		);
 	}
 
 	/**
@@ -315,15 +365,20 @@ class Hardening {
 				);
 
 			case 'wp_config_perms':
-				return array(
-					array( 'text' => $panel ),
-					array( 'text' => __( 'Right-click wp-config.php and choose "Permissions" (or "Change permissions").', 'qartvelo-guard' ) ),
-					array( 'text' => __( 'Enter 640 (or 600 if your host recommends it) and save. Then reload this page.', 'qartvelo-guard' ) ),
-					array(
-						'text' => __( 'With SSH instead, run:', 'qartvelo-guard' ),
-						'code' => 'chmod 640 ' . Sysadmin_Tools::shell_arg( $config ? $config : 'wp-config.php' ),
-					),
+				$fix   = Sysadmin_Tools::wp_config_fix( $config ? $config : '' );
+				$steps = array( array( 'text' => $panel ) );
+				if ( 'other' === $fix['access'] ) {
+					$steps[] = array( 'text' => __( 'PHP runs as a user that neither owns wp-config.php nor is in its group, so it reads the file only through the permission for everyone else, and a stricter permission alone would take the site down. Ask your host to put the file in the web server\'s group first (the SSH commands below do that), then set 640.', 'qartvelo-guard' ) );
+				} else {
+					$steps[] = array( 'text' => __( 'Right-click wp-config.php and choose "Permissions" (or "Change permissions").', 'qartvelo-guard' ) );
+					/* translators: %s: permission number, e.g. 640 */
+					$steps[] = array( 'text' => sprintf( __( 'Enter %s and save. Then reload this page.', 'qartvelo-guard' ), $fix['mode'] ) );
+				}
+				$steps[] = array(
+					'text' => 'other' === $fix['access'] ? __( 'With SSH (as root):', 'qartvelo-guard' ) : __( 'With SSH instead, run:', 'qartvelo-guard' ),
+					'code' => $fix['code'],
 				);
+				return $steps;
 
 			case 'world_writable':
 				$scan = Sysadmin_Tools::world_writable_scan();

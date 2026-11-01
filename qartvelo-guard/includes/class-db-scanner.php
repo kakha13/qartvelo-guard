@@ -107,7 +107,9 @@ class Db_Scanner {
 
 	/**
 	 * Tables of code snippet plugins, scanned when they exist:
-	 * stage => { table (without prefix), id, code and name columns, plugin, label }.
+	 * stage => { table (without prefix), id, code and name columns, plugin,
+	 * base (the table carries the network's base prefix and exists once per
+	 * network, so it is visited with the main site only) }.
 	 */
 	const CODE_TABLES = array(
 		'hfcm'     => array(
@@ -123,6 +125,14 @@ class Db_Scanner {
 			'code'   => 'code',
 			'name'   => 'name',
 			'plugin' => 'Code Snippets',
+		),
+		'ms_snippets' => array(
+			'table'  => 'ms_snippets',
+			'id'     => 'id',
+			'code'   => 'code',
+			'name'   => 'name',
+			'plugin' => 'Code Snippets (network)',
+			'base'   => true,
 		),
 	);
 
@@ -539,17 +549,34 @@ class Db_Scanner {
 		global $wpdb;
 		$stages = array_keys( self::CODE_TABLES );
 		$start  = 'posts' === $after ? 0 : (int) array_search( $after, $stages, true ) + 1;
+		$blog   = ! empty( $cursor['blog'] ) ? (int) $cursor['blog'] : get_current_blog_id();
 		for ( $i = $start; $i < count( $stages ); $i++ ) {
-			$table = $wpdb->prefix . self::CODE_TABLES[ $stages[ $i ] ]['table'];
+			$def = self::CODE_TABLES[ $stages[ $i ] ];
+			if ( ! empty( $def['base'] ) && Network::active() && $blog !== Network::main_site_id() ) {
+				continue; // One table for the whole network: visited with the main site.
+			}
+			$table = self::table_name( $def );
 			$found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) ); // phpcs:ignore WordPress.DB
 			if ( $found === $table ) {
 				$cursor['stage'] = $stages[ $i ];
 				$cursor['last']  = 0;
-				$cursor['max']   = (int) $wpdb->get_var( 'SELECT MAX(`' . self::CODE_TABLES[ $stages[ $i ] ]['id'] . "`) FROM `{$table}`" ); // phpcs:ignore WordPress.DB, PluginCheck.Security.DirectDB.UnescapedDBParameter -- table and column names come from the CODE_TABLES constant.
+				$cursor['max']   = (int) $wpdb->get_var( 'SELECT MAX(`' . $def['id'] . "`) FROM `{$table}`" ); // phpcs:ignore WordPress.DB, PluginCheck.Security.DirectDB.UnescapedDBParameter -- table and column names come from the CODE_TABLES constant.
 				return;
 			}
 		}
 		$cursor['stage'] = 'done';
+	}
+
+	/**
+	 * Full name of a code plugin table: the site's prefix, or the network's
+	 * base prefix for a table that exists once per network.
+	 *
+	 * @param array $def CODE_TABLES entry.
+	 * @return string
+	 */
+	private static function table_name( array $def ) {
+		global $wpdb;
+		return ( empty( $def['base'] ) ? $wpdb->prefix : $wpdb->base_prefix ) . $def['table'];
 	}
 
 	/**
@@ -561,7 +588,7 @@ class Db_Scanner {
 		global $wpdb;
 		$stage = (string) $cursor['stage'];
 		$def   = self::CODE_TABLES[ $stage ];
-		$table = $wpdb->prefix . $def['table'];
+		$table = self::table_name( $def );
 		$from  = (int) $cursor['last'];
 		$to    = $from + self::POSTS_RANGE;
 		// phpcs:disable WordPress.DB, PluginCheck.Security.DirectDB.UnescapedDBParameter -- table and column names come from the CODE_TABLES constant.

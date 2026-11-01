@@ -4,12 +4,17 @@
  */
 
 /* ---------- Shared bits ---------- */
+/* Hidden like core's screen-reader-text: an element parked at left: -9999px widens the page in right-to-left locales. */
 .wpcs-default-submit {
 	position: absolute !important;
-	left: -9999px;
 	width: 1px;
 	height: 1px;
+	margin: -1px;
+	padding: 0;
 	overflow: hidden;
+	clip: rect(1px, 1px, 1px, 1px);
+	clip-path: inset(50%);
+	border: 0;
 }
 
 .wpcs-wrap .button .dashicons {
@@ -62,7 +67,7 @@
 }
 
 .wpcs-field__unit {
-	margin-left: 4px;
+	margin-inline-start: 4px;
 	color: var(--wpcs-muted);
 }
 
@@ -115,7 +120,8 @@
 }
 
 .wpcs-indent {
-	margin: 8px 0 0 24px;
+	margin: 8px 0 0;
+	margin-inline-start: 24px;
 }
 
 .wpcs-indent input[type="text"] {
@@ -166,7 +172,7 @@
 }
 
 .wpcs-toggle-row .wpcs-field__help {
-	margin-left: 48px;
+	margin-inline-start: 48px;
 	margin-top: 2px;
 }
 
@@ -181,7 +187,7 @@
 
 .wpcs-option__title {
 	font-size: 15px;
-	padding-right: 90px;
+	padding-inline-end: 90px;
 }
 
 .wpcs-option__title .dashicons {
@@ -205,7 +211,7 @@
 .wpcs-option ul {
 	padding-top: 10px;
 	border-top: 1px solid var(--wpcs-line);
-	padding-left: 18px;
+	padding-inline-start: 18px;
 }
 
 .wpcs-option ul li {
@@ -504,7 +510,8 @@
 }
 
 .wpcs-wizard__next .dashicons {
-	margin: -3px -4px 0 6px;
+	margin: -3px 0 0;
+	margin-inline: 6px -4px;
 }
 
 .wpcs-wizard__next[disabled] {
@@ -614,7 +621,8 @@
 }
 
 .wpcs-wizard__tune .wpcs-notice {
-	margin: 4px 0 0 48px;
+	margin: 4px 0 0;
+	margin-inline-start: 48px;
 	font-size: 12px;
 	padding: 9px 12px;
 }
@@ -727,7 +735,7 @@
 
 .wpcs-more-checks > summary::after {
 	content: "\f347";
-	margin-left: auto;
+	margin-inline-start: auto;
 	font-family: dashicons;
 	font-weight: 400;
 	color: var(--wpcs-muted);
@@ -833,7 +841,7 @@
 
 .wpcs-summary .wpcs-badge {
 	white-space: normal;
-	text-align: right;
+	text-align: end;
 	justify-self: end;
 }
 
@@ -892,7 +900,7 @@
 }
 
 .wpcs-settings .wpcs-tabs .wpcs-badge {
-	margin-left: 4px;
+	margin-inline-start: 4px;
 	font-weight: 500;
 }
 
@@ -1063,7 +1071,8 @@ body.js .wpcs-savebar.is-idle {
 }
 
 .wpcs-help-more ul {
-	margin: 6px 0 0 18px;
+	margin: 6px 0 0;
+	margin-inline-start: 18px;
 	list-style: disc;
 }
 
@@ -1245,7 +1254,7 @@ body.js .wpcs-savebar.is-idle {
 .wpcs-live__hint {
 	flex: 1 1 100%;
 	min-width: 0;
-	padding-left: 28px;
+	padding-inline-start: 28px;
 }
 
 .wpcs-live__hint .wpcs-sub {
@@ -1298,7 +1307,7 @@ body.js .wpcs-savebar.is-idle {
 }
 
 .wpcs-devbar__count {
-	margin-right: auto;
+	margin-inline-end: auto;
 	font-weight: 600;
 }
 
@@ -1312,7 +1321,8 @@ body.js .wpcs-savebar.is-idle {
 .wpcs-devlist__item {
 	position: relative;
 	margin: 0;
-	padding: 14px 0 14px 36px;
+	padding: 14px 0;
+	padding-inline-start: 36px;
 	border-top: 1px solid var(--wpcs-line);
 	counter-increment: wpcs-dev;
 }
@@ -1325,7 +1335,7 @@ body.js .wpcs-savebar.is-idle {
 .wpcs-devlist__item::before {
 	content: counter(wpcs-dev);
 	position: absolute;
-	left: 0;
+	inset-inline-start: 0;
 	top: 14px;
 	display: grid;
 	place-items: center;
@@ -1377,10 +1387,14 @@ body.js .wpcs-savebar.is-idle {
 
 .wpcs-offscreen {
 	position: absolute !important;
-	left: -9999px;
 	width: 1px;
 	height: 1px;
+	margin: -1px;
+	padding: 0;
 	overflow: hidden;
+	clip: rect(1px, 1px, 1px, 1px);
+	clip-path: inset(50%);
+	border: 0;
 }
 
 .wpcs-devnote {
@@ -1397,13 +1411,13 @@ body.js .wpcs-savebar.is-idle {
 .wpcs-status-table td {
 	padding: 8px 0;
 	border-bottom: 1px solid var(--wpcs-line);
-	text-align: left;
+	text-align: start;
 	vertical-align: top;
 }
 
 .wpcs-status-table th {
 	width: 240px;
-	padding-right: 16px;
+	padding-inline-end: 16px;
 	font-weight: 500;
 	color: var(--wpcs-muted);
 }
@@ -1453,7 +1467,7 @@ html:has(body.wpcs-settings-screen) {
 }
 
 .wpcs-savebar__note {
-	margin-right: auto;
+	margin-inline-end: auto;
 	color: var(--wpcs-muted);
 	font-size: 12px;
 }
@@ -1479,8 +1493,9 @@ html:has(body.wpcs-settings-screen) {
 	.wpcs-toc {
 		flex-wrap: nowrap;
 		overflow-x: auto;
-		margin-right: -12px;
-		padding: 2px 12px 8px 2px;
+		margin-inline-end: -12px;
+		padding: 2px 0 8px;
+		padding-inline: 2px 12px;
 		scrollbar-width: thin;
 		-webkit-overflow-scrolling: touch;
 	}
@@ -1552,7 +1567,7 @@ html:has(body.wpcs-settings-screen) {
 
 	.wpcs-wizard__tune .wpcs-notice,
 	.wpcs-toggle-row .wpcs-field__help {
-		margin-left: 0;
+		margin-inline-start: 0;
 	}
 
 	.wpcs-status-table th {
@@ -1560,7 +1575,7 @@ html:has(body.wpcs-settings-screen) {
 	}
 
 	.wpcs-option__title {
-		padding-right: 0;
+		padding-inline-end: 0;
 	}
 
 	.wpcs-option__tag {
@@ -1619,14 +1634,15 @@ html:has(body.wpcs-settings-screen) {
 	font-weight: 600;
 }
 .wpcs-wrap .wpcs-howto {
-	margin: 8px 0 0 18px;
+	margin: 8px 0 0;
+	margin-inline-start: 18px;
 	padding: 0;
 	font-size: 13px;
 	color: var(--wpcs-ink-2);
 }
 .wpcs-wrap .wpcs-howto li {
 	margin: 0 0 8px;
-	padding-left: 2px;
+	padding-inline-start: 2px;
 }
 .wpcs-wrap .wpcs-howto .wpcs-code {
 	margin: 6px 0 4px;
@@ -1636,7 +1652,8 @@ html:has(body.wpcs-settings-screen) {
 	display: list-item;
 	grid-template-columns: none;
 	gap: 0;
-	padding: 0 0 0 2px;
+	padding: 0;
+	padding-inline-start: 2px;
 	border-bottom: 0;
 	margin: 0 0 8px;
 }
@@ -1706,7 +1723,8 @@ html:has(body.wpcs-settings-screen) {
 	margin-top: 8px;
 }
 .wpcs-wrap .wpcs-signals__list {
-	margin: 6px 0 0 18px;
+	margin: 6px 0 0;
+	margin-inline-start: 18px;
 	padding: 0;
 	list-style: disc;
 	font-size: 12px;
@@ -1719,7 +1737,7 @@ html:has(body.wpcs-settings-screen) {
 .wpcs-wrap .wpcs-panel-steps {
 	margin: 10px 0 12px;
 	padding: 10px 14px;
-	border-left: 3px solid var(--wpcs-brand-2);
+	border-inline-start: 3px solid var(--wpcs-brand-2);
 	background: var(--wpcs-bg);
 }
 .wpcs-wrap .wpcs-panel-steps__head {
@@ -1730,7 +1748,7 @@ html:has(body.wpcs-settings-screen) {
 	margin: 0;
 }
 .wpcs-wrap .wpcs-panel-steps__change {
-	margin-left: auto;
+	margin-inline-start: auto;
 	font-size: 12px;
 }
 .wpcs-wrap details.wpcs-other-ways {
@@ -1757,7 +1775,8 @@ html:has(body.wpcs-settings-screen) {
 }
 
 .wpcs-stats-optin__list {
-	margin: 0 0 10px 18px;
+	margin: 0 0 10px;
+	margin-inline-start: 18px;
 	padding: 0;
 	list-style: disc;
 	color: var(--wpcs-ink-2);
