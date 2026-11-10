@@ -18,6 +18,14 @@ class Installer {
 	const DB_OPTION       = 'wpcybersec_db_version';
 	const REDIRECT_OPTION = 'wpcybersec_activation_redirect';
 
+	/**
+	 * Network option: the plugin version whose code ran here last. Stored from
+	 * 1.2.0 on (record_version()); an install that exists without it was last
+	 * run by an older version. Read on every request, so it is autoloaded on a
+	 * single site and primed on multisite (Network::NETWORK_PRIME).
+	 */
+	const VERSION_OPTION = 'wpcybersec_version';
+
 	/** Cron hooks owned by the plugin. */
 	const CRON_HOOKS = array(
 		'wpcybersec_scheduled_scan',
@@ -68,7 +76,6 @@ class Installer {
 	 */
 	public static function install() {
 		global $wpdb;
-		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
 		$charset = $wpdb->get_charset_collate();
 		$items   = Store::table( 'items' );
@@ -148,6 +155,12 @@ class Installer {
 		// network options before defaults are seeded (see Network).
 		Network::migrate_main_options();
 
+		// An install that is already here (update, or activated again) or a new one.
+		$existing = false !== Network::get_option( self::DB_OPTION, false );
+
+		if ( ! function_exists( 'dbDelta' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		}
 		dbDelta( $sql );
 
 		if ( false === Network::get_option( Settings::OPTION, false ) ) {
@@ -169,6 +182,7 @@ class Installer {
 		User_Watch::seed();
 
 		Network::update_option( self::DB_OPTION, WPCYBERSEC_DB_VERSION, true );
+		self::record_version( $existing );
 		self::autoload_state_options();
 
 		// Per-site tables and options of the other sites (bounded; the rest
@@ -191,9 +205,39 @@ class Installer {
 			if ( $old && version_compare( (string) $old, '6', '<' ) ) {
 				self::add_default_exec_extensions( array( 'php2', 'php6' ) ); // The signature engine already treated them as PHP.
 			}
-		} elseif ( ! Network::active() && ! get_option( Network::AUTOLOAD_FLAG ) ) {
-			self::autoload_state_options();
+		} else {
+			self::record_version( true ); // A plugin update that left the tables as they were.
+			if ( ! Network::active() && ! get_option( Network::AUTOLOAD_FLAG ) ) {
+				self::autoload_state_options();
+			}
 		}
+	}
+
+	/**
+	 * Stores the plugin version that runs now and does what an update from an
+	 * older one needs once. Called on every request (maybe_upgrade()): one
+	 * comparison with an autoloaded option when nothing changed.
+	 *
+	 * Update from a version before 1.2.0 on a site that used real cron
+	 * (wpcybersec_cli_cron_at was written at least once): 1.2.0 removed
+	 * bin/cron.php, which the crontab lines of those versions started, so the
+	 * time of the update is stored for Sysadmin_Tools::cron_removed_note(). A
+	 * new install never gets that note, and a later update does not bring it
+	 * back.
+	 *
+	 * @param bool $existing False for a new install (no tables version was stored before).
+	 */
+	private static function record_version( $existing ) {
+		$stored = (string) Network::get_option( self::VERSION_OPTION, '' );
+		if ( WPCYBERSEC_VERSION === $stored ) {
+			return;
+		}
+		// Versions before 1.2.0 stored no version: an existing install without one is older.
+		$before_120 = '' !== $stored ? version_compare( $stored, '1.2.0', '<' ) : (bool) $existing;
+		if ( $before_120 && (int) Network::get_option( 'wpcybersec_cli_cron_at', 0 ) > 0 ) {
+			Network::update_option( Sysadmin_Tools::CRON_NOTE_OPTION, time(), false );
+		}
+		Network::update_option( self::VERSION_OPTION, WPCYBERSEC_VERSION, true );
 	}
 
 	/**
@@ -211,7 +255,7 @@ class Installer {
 		}
 		global $wpdb;
 		$names = Network::STATE_OPTIONS;
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- core options table, one placeholder per fixed name; read once on upgrade.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- core options table, one placeholder per fixed name; read once on upgrade.
 		$rows = (array) $wpdb->get_results( $wpdb->prepare( "SELECT option_name, autoload FROM {$wpdb->options} WHERE option_name IN (" . implode( ',', array_fill( 0, count( $names ), '%s' ) ) . ')', $names ) );
 		$on   = function_exists( 'wp_autoload_values_to_autoload' ) ? wp_autoload_values_to_autoload() : array( 'yes' );
 		$fix  = array();
@@ -224,10 +268,10 @@ class Installer {
 			if ( function_exists( 'wp_set_option_autoload_values' ) ) {
 				wp_set_option_autoload_values( array_fill_keys( $fix, true ) ); // WordPress 6.4+.
 			} else {
-				// WordPress 6.0-6.3 have no API that changes the autoload flag of an
+				// WordPress 6.2 and 6.3 have no API that changes the autoload flag of an
 				// existing option without rewriting its value; an UPDATE changes only
 				// the flag, so the value is never missing for a concurrent request.
-				// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- core options table, one placeholder per fixed name.
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- core options table, one placeholder per fixed name.
 				$wpdb->query( $wpdb->prepare( "UPDATE {$wpdb->options} SET autoload = 'yes' WHERE option_name IN (" . implode( ',', array_fill( 0, count( $fix ), '%s' ) ) . ')', $fix ) );
 				foreach ( $fix as $name ) {
 					wp_cache_delete( $name, 'options' );

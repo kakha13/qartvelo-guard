@@ -1,10 +1,10 @@
 === Qartvelo Guard ===
 Contributors: kakha13
 Tags: security, malware scanner, file integrity, upload, quarantine
-Requires at least: 6.0
+Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.1.4
+Stable tag: 1.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -27,7 +27,7 @@ Qartvelo Guard works like a door that only opens for files you know. Every new u
 * **Database scan.** Options, posts and the storage of header and footer script plugins (WPCode, Header Footer Code Manager, Code Snippets) are checked for injected scripts.
 * **Administrator watch.** Every new administrator account is reported and waits for your review: at once when it is created through WordPress, and at the next scan when it was inserted straight into the database. Deny removes the role and signs the account out.
 * **Recent changes.** A site that was already infected when the baseline was recorded looks normal to a scan. Reports > Recent changes lists every PHP, script and configuration file modified in the last 7, 14 or 30 days and says what explains each change: an update, an official checksum, or nothing.
-* **Clean core reinstall.** When WordPress core looks damaged, one button downloads the official package of your version from WordPress.org, checks every file against the official checksums, swaps wp-admin, wp-includes and the root core files in a few seconds with maintenance mode on, and puts the old core back by itself if the site stops answering. Step by step instructions are offered for doing it by hand.
+* **Clean core reinstall.** When a WordPress core file is changed, infected or missing, one button starts the updater that is built into WordPress (the same as Dashboard > Updates > Re-install): WordPress downloads the official package of your version from WordPress.org and overwrites its own core files. The plugin itself never creates or overwrites a file in wp-admin or wp-includes. Files that are not part of WordPress stay reported for you to quarantine or delete. Step by step instructions are offered for doing it by hand.
 
 = For administrators and hosts =
 
@@ -69,7 +69,7 @@ Updates of installed plugins, themes and core are checked again right away again
 
 = What if WordPress core itself is infected? =
 
-Modified or extra files in wp-admin and wp-includes are reported as threats. When several core files are damaged, or an extra PHP file sits in wp-admin or wp-includes, the plugin offers to reinstall a clean copy of your WordPress version, verified against the official checksums, with an automatic rollback. wp-config.php, wp-content and your own files are not touched.
+Modified or extra files in wp-admin and wp-includes are reported as threats. When a core file is changed, infected or missing, the plugin offers "Reinstall WordPress core": it starts WordPress's own updater, the same one as Dashboard > Updates > Re-install, which downloads the official package of your WordPress version and overwrites every core file with it. The plugin writes no core file itself, and the changed files are not kept. wp-config.php, your plugins, themes and uploads and your own files are not touched. On a site that was installed from a localized WordPress package, the updater also replaces WordPress's own translation files in wp-content/languages with those of the package, and WordPress offers newer translations again under Dashboard > Updates. A reinstall only overwrites WordPress files: an extra file in wp-admin or wp-includes that is not part of WordPress stays where it is and stays in Reports, where you quarantine or delete it. If WordPress would ask for FTP details on your server, the plugin sends you to Dashboard > Updates instead, and step by step instructions for doing it by hand are always shown.
 
 = What about false positives? =
 
@@ -101,15 +101,15 @@ The plugin connects to the services below. It sends no personal data, no site co
 
 * **WordPress.org core checksums** (api.wordpress.org): during scans and before a core reinstall, to get the official checksums of the WordPress core files of your version. Sent: WordPress version and locale. [Privacy policy](https://wordpress.org/about/privacy/)
 * **WordPress.org plugin checksums** (downloads.wordpress.org): during scans, the official checksums of installed plugins that are hosted on WordPress.org. Sent: plugin slug and version. [Privacy policy](https://wordpress.org/about/privacy/)
-* **WordPress.org core package** (downloads.wordpress.org): only when an administrator starts "Reinstall clean core", the official package of the installed version without wp-content (wordpress-VERSION-no-content.zip) and its .sha1 checksum file. Sent: the WordPress version in the address. [Privacy policy](https://wordpress.org/about/privacy/)
-* **WordPress.org Subversion** (core.svn.wordpress.org, plugins.svn.wordpress.org): when you open the "What changed" view of a core file or a WordPress.org plugin file, or press "Restore official file", the original file is downloaded and checked against the official checksum. Sent: the file path, the plugin slug and the version. [Privacy policy](https://wordpress.org/about/privacy/)
+* **WordPress.org core package** (downloads.wordpress.org, api.wordpress.org): only when an administrator starts "Reinstall WordPress core". WordPress's own updater then downloads the official package of the installed version and reports the outcome of the update to WordPress.org, exactly as it does when you press Re-install on Dashboard > Updates. Sent: the WordPress version and language in the address, and what WordPress sends with every core update. [Privacy policy](https://wordpress.org/about/privacy/)
+* **WordPress.org Subversion** (core.svn.wordpress.org, plugins.svn.wordpress.org): when you open the "What changed" view of a core file or a WordPress.org plugin file, the original file is downloaded for the comparison and checked against the official checksum. Sent: the file path, the plugin slug and the version. [Privacy policy](https://wordpress.org/about/privacy/)
 * **Your webhook URL** (optional, Slack, Discord, Microsoft Teams or any service you choose): when you enter one, alerts are posted there. Sent: the site name, the number of held files and threats, the names and paths of the files concerned and a link to the Reports page. Nothing is sent unless you enter a URL; the terms and privacy policy of the service you choose apply.
-* **Your own site** (loopback requests): the early guard live test, the uploads folder test, the data folder test and the check after a core reinstall request pages and test files of this same site. They do not leave your server's own address.
+* **Your own site** (loopback requests): the early guard live test, the uploads folder test and the data folder test request pages and test files of this same site. They do not leave your server's own address.
 * **Qartvelo Company statistics** (qartvelo.com), only if you opt in: off by default and nothing is sent before you turn on "Help improve Qartvelo Guard" in the setup wizard (Alerts step) or in Settings > General. Sent to https://qartvelo.com/api/qartvelo-guard/stats when you turn it on, then once a week, when the plugin is deactivated or deleted, and one last time when you turn it off. Sent: a random install ID, the event, the site address and name, the versions of the plugin, WordPress and PHP, the plugin database version, the site language, whether it is a multisite network and how many sites it has, the web server type and detected hosting panel, the protection level and upload, install and new-file settings, whether ClamAV is on, Linux Malware Detect is installed and the early guard is active, rounded counts of files monitored, items waiting and threats from the last scan, the time of the last scan, and once a signing key that proves later messages come from the same site. Never sent: email addresses, user names, file names or paths, visitor IP addresses, keys or passwords, or site content. Turn it off in Settings > General at any time; the constant `WPCYBERSEC_DISABLE_STATS` switches it off for good. [Privacy policy](https://qartvelo.com/qartvelo-guard/docs/privacy-and-external-services), [Terms of use](https://qartvelo.com/qartvelo-guard/docs/terms)
 
 Host names that are not connections: the database scan contains a list of well-known script and image hosts (for example www.googletagmanager.com, connect.facebook.net, js.stripe.com, www.gstatic.com, s.imgur.com). It only compares the addresses of scripts it finds in your database with this list, to tell common embeds from injected code. The plugin never connects to these hosts and never loads anything from them.
 
-The server script offered in Settings > Advanced (Antivirus engines and Developer instructions), cgav, is text for an administrator to read and run on the server. When it is run, it installs ClamAV from the operating system's package repositories and Linux Malware Detect from rfxn.com, and its test command fetches the harmless EICAR test file from secure.eicar.org. The same commands appear in the step by step instructions. The plugin never runs them and never installs software. The only code it ever writes into your site comes from WordPress.org: the official core package for a reinstall you start, or an official original file when you press "Restore official file".
+The server script offered in Settings > Advanced (Antivirus engines and Developer instructions), cgav, is text for an administrator to read and run on the server. When it is run, it installs ClamAV from the operating system's package repositories and Linux Malware Detect from rfxn.com, and its test command fetches the harmless EICAR test file from secure.eicar.org. The same commands appear in the step by step instructions. The plugin never runs them and never installs software. It never creates or overwrites a file in wp-admin or wp-includes, and it never writes into its own plugin folder: a core reinstall you start is carried out by WordPress's own updater with the official package from WordPress.org. A file that an administrator, or the automatic quarantine, moves to quarantine is moved out of its place. It can be put back where it was, except into wp-admin, wp-includes and the plugin's own folder: an official WordPress file comes back with a core reinstall, a file of the plugin by installing the plugin again, any other file is downloaded from quarantine and put back by hand. The fix "Remove write access for other users" changes permissions only, never the content of a file.
 
 Data kept on your site: for every held file the plugin records the uploading user, their IP address and the time, so you can decide whether to allow it. This stays in your database and is removed with the plugin's data.
 
@@ -121,10 +121,21 @@ Data kept on your site: for every held file the plugin records the uploading use
 4. What changed: an injected line in a WordPress core file, with the malware match on its line.
 5. Settings > Advanced > Server health, with the detected hosting panel and one-click fixes.
 6. The early upload guard after the one-click setup and its live test.
-7. Damaged WordPress core: reinstall a clean copy, verified against the official checksums.
+7. Damaged WordPress core: let WordPress reinstall its core from the official package, or follow the steps by hand.
 8. Recent changes: every recently modified code file and what explains the change.
 
 == Changelog ==
+
+= 1.2.0 =
+* Requires WordPress 6.2 or newer.
+* Real cron: the bin/cron.php runner is removed. Scheduled scans from the server's cron now run through WP-CLI ("wp wpcybersec scan"), or through a request for wp-cron.php where WP-CLI is not available. If your crontab still has lines that start bin/cron.php, replace them with the lines shown in Settings > Advanced > Real cron.
+* "Reinstall WordPress core" is now carried out by the updater that is built into WordPress, the same as Dashboard > Updates > Re-install. The plugin no longer creates or overwrites any file in wp-admin or wp-includes and no longer keeps a copy of the previous core.
+* "Restore official file" for a single changed core file is replaced by a link to the core reinstall.
+* A file that was moved to quarantine out of wp-admin, wp-includes or the plugin's own folder is no longer put back there by the plugin: download it from quarantine instead, or delete the held copy.
+* After a WordPress update, files in wp-admin, wp-includes and the languages folder that the update did not deliver are no longer trusted automatically: the next scan reports them.
+* Secrets in commented-out define() lines are hidden in the file and What changed views.
+* The printed cron lines use the full path to wp, and real cron is confirmed only after several regular runs.
+* Changes for the WordPress.org review: admin output is escaped where it is printed, every database query is prepared (table and column names included), WordPress folders are located only through WordPress constants and functions, and PHP time limits are no longer changed.
 
 = 1.1.4 =
 * Strict level: a new version of Qartvelo Guard installed from a ZIP is held as a normal update waiting for approval, no longer as "code that looks unsafe" because of the plugin's own malware signature file.
@@ -157,7 +168,7 @@ Data kept on your site: for every held file the plugin records the uploading use
 
 = 1.0.3 =
 * The Antivirus engines "On the server now" rows always use the newest ClamAV self-test: "Check again" now tests before any part of the page reads the state, so the clamd row no longer shows an old "Not running".
-* A failed ClamAV self-test (for example while clamd restarts or the server is short of memory) is tested again within 15 minutes instead of being kept for 6 hours, and real cron (bin/cron.php) retests it when needed.
+* A failed ClamAV self-test (for example while clamd restarts or the server is short of memory) is tested again within 15 minutes instead of being kept for 6 hours, and real cron retests it when needed.
 
 = 1.0.2 =
 * "Code folders other users can write to" now also looks one level inside the WordPress folder and wp-content: a second WordPress install in a subfolder, translation files (PHP since WordPress 6.5), upgrade, uploads and backup folders. The one-click fix covers them too.
@@ -190,3 +201,8 @@ Data kept on your site: for every held file the plugin records the uploading use
 * Optional early upload guard, ClamAV with a self-test, freeze lock, real cron and tamper check.
 * Multisite network mode and WP-CLI commands.
 * Optional, opt-in usage statistics for the developer, off by default.
+
+== Upgrade Notice ==
+
+= 1.2.0 =
+Requires WordPress 6.2. The bin/cron.php runner is removed: if your server's crontab starts it, replace those lines with the ones shown in Settings > Advanced > Real cron.

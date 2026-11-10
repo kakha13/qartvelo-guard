@@ -7,18 +7,25 @@ WordPress security plugin: full-site malware scan, holds every new upload/instal
 - `scripts/build.sh --wporg` - same plus WordPress.org checks (needs real `Contributors:` in readme.txt)
 - `scripts/build.sh --svn PATH` - sync trunk/tags/assets into a wp.org SVN checkout (prints svn commands, does not commit)
 - `php qartvelo-guard/bin/build-checksums.php` - regenerate `checksums.json`; run after ANY plugin file change, or the plugin flags its own edited files as tampered
-- `php qartvelo-guard/bin/cron.php [--full|--baseline] [--isolated] [--url=URL]` - run a scan to completion from the CLI (inside a WP install); `--isolated` loads no other plugin and no theme (mu-plugins still load); `--url` is the network address on multisite
+- `wp wpcybersec scan [--full|--baseline] [--database] [--url=URL]` - run a scan to completion from the CLI; `--url` is the network address on multisite. There is no standalone runner any more (bin/cron.php was removed in 1.2.0 for the WordPress.org review): real cron is WP-CLI or a request for wp-cron.php
 - `wp wpcybersec report --file=report.html` - the downloadable security report (also Reports > Download report)
 - Lint: `for f in $(find qartvelo-guard -name '*.php'); do php -l $f; done` and `node --check` on `assets/js/*.js`
 
 ## Code rules
-- PHP 7.4 compatible syntax (no match, `?->`, named args, union types, `str_contains`); WordPress 6.0+
+- PHP 7.4 compatible syntax (no match, `?->`, named args, union types, `str_contains`); WordPress 6.2+ (SQL identifiers go through `$wpdb->prepare()` with `%i`)
 - Namespace `WPCyberSecurity\` (admin: `WPCyberSecurity\Admin\`), file `class-foo-bar.php` for `Foo_Bar`, autoloaded
 - Services via `wpcybersec()->name`; module constructors stay cheap, hooks go in `register()`
 - Capability checks via `Admin\Admin::can()` (network admin on multisite), plus nonce on every handler
 - No em/en dashes anywhere (code, comments, UI strings); icons are Dashicons, no emojis
 - Never show secrets: diff/snippet output goes through `Diff::redact()` / `Diff::redact_snippet()`
 - Allowlist approvals are bound to executability: `is_allowed_hash( $sha, $executable )`
+- WordPress.org review rules (third review, 1.2.0), keep them or the plugin is rejected again:
+  - Escape late: helper HTML is printed as `echo wp_kses( $html, Admin\Kses::allowed() );` at the echo, never with a `phpcs:ignore` for EscapeOutput (only `guard/guard.php` has two). A new tag or attribute must be added to `Kses::allowed()` or it disappears silently
+  - SQL: no variable inside a query string except core `$wpdb->` table properties; everything through `$wpdb->prepare()`, table and column names as `%i`
+  - Paths: `ABSPATH` only in the direct access guards, in `Paths::wp_root()` and in core includes; other folders from `WP_CONTENT_DIR`, `WP_PLUGIN_DIR`, `WPMU_PLUGIN_DIR`, `WP_LANG_DIR`, `get_theme_root()`, `wp_upload_dir()`, never built from a name and never with a `defined()` fallback
+  - Core includes: `require_once ABSPATH . 'wp-admin/includes/x.php';` inside a `function_exists`/`class_exists` test, with the use on the next line; never load wp-load.php or wp-config.php
+  - No `set_time_limit()`, `error_reporting()`, `ini_set()`; no literal `<style>` or `<script>` output (use the enqueue API); no file that bootstraps WordPress
+  - Never create or overwrite a file in wp-admin, wp-includes or the plugin's own folder (`Paths::in_core_dir()`; quarantine restore refuses those targets). Core repair is WordPress's `Core_Upgrader` only. Stored copies live in the uploads data folder under names that cannot run (.bin, .gz, .bak)
 
 ## Gotchas
 - Renamed from CyberGate Security (slug cybergate-security) to Qartvelo Guard (slug qartvelo-guard) in 1.1.0 for the WordPress.org review: "wp" is a restricted term in plugin names and slugs. Internal identifiers stay `wpcybersec`/`WPCYBERSEC_`/`WPCyberSecurity\` (options, tables, hooks, WP-CLI). Files written by older versions carry legacy markers that must stay recognised: `Guard_Manager::LEGACY_MARKER`, `Sysadmin_Tools::LEGACY_MARKER`, the wp-config "Added by CyberGate Security" comment, settings exports with `plugin: cybergate-security`

@@ -37,24 +37,29 @@ class Cli {
 			__CLASS__,
 			array( 'shortdesc' => 'Scan the site, review held files and manage Qartvelo Guard.' )
 		);
-		// The WP-CLI variant of the real cron jobs runs "wp cron event run" every
-		// 5 minutes: that proves real cron as well as bin/cron.php does.
+		// The WP-CLI cron lines run "wp cron event run" every 5 minutes: that
+		// proves real cron as well as a scan started from the crontab does.
 		\WP_CLI::add_hook( 'after_invoke:cron event run', array( __CLASS__, 'record_cron_run' ) );
 	}
 
 	/**
 	 * Records that real cron runs (network option wpcybersec_cli_cron_at, also
-	 * written by bin/cron.php), so Settings > Advanced > Real cron shows "Real cron
+	 * written by Sysadmin_Tools::record_wp_cron_request() for the cron line
+	 * without WP-CLI), so Settings > Advanced > Real cron shows "Real cron
 	 * last ran" and offers to switch off visitor-triggered cron. Only for runs
 	 * without a terminal or with --quiet (how crontab lines run): a command typed
 	 * once by hand proves nothing about a cron job.
+	 *
+	 * @return bool Whether the run was recorded.
 	 */
 	public static function record_cron_run() {
 		$quiet = class_exists( '\WP_CLI' ) && \WP_CLI::get_config( 'quiet' );
 		$tty   = function_exists( 'posix_isatty' ) && defined( 'STDOUT' ) && @posix_isatty( STDOUT ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
 		if ( $quiet || ! $tty ) {
 			Network::update_option( 'wpcybersec_cli_cron_at', time(), false );
+			return true;
 		}
+		return false;
 	}
 
 	/* ------------------------------------------------------------------ */
@@ -241,9 +246,6 @@ class Cli {
 	 * [--database]
 	 * : Also scan the database (options and posts) for injected code. On by default for --full and --baseline; use --no-database to skip it, or --database to add it to a quick scan.
 	 *
-	 * [--isolated]
-	 * : Not available here: a scan where other plugins and the theme cannot run has to start before WordPress loads them. Use the standalone runner instead: php wp-content/plugins/qartvelo-guard/bin/cron.php --isolated [--full]
-	 *
 	 * ## EXAMPLES
 	 *
 	 *     $ wp wpcybersec scan
@@ -255,16 +257,13 @@ class Cli {
 	 */
 	public function scan( $args, $assoc_args ) {
 		unset( $args );
-		if ( isset( $assoc_args['isolated'] ) ) {
-			\WP_CLI::error(
-				sprintf(
-					/* translators: %s: command */
-					__( 'WP-CLI has already loaded the active plugins and the theme, so this scan cannot isolate them. Run the isolated scan with the standalone runner: %s', 'qartvelo-guard' ),
-					Sysadmin_Tools::php_command() . ' ' . Sysadmin_Tools::shell_arg( WPCYBERSEC_DIR . 'bin/cron.php' ) . ' --isolated --full --wp=' . Sysadmin_Tools::shell_arg( untrailingslashit( ABSPATH ) ) . ( is_multisite() ? ' --url=' . Sysadmin_Tools::shell_arg( network_home_url( '/' ) ) : '' )
-				)
-			);
-		}
 		$job      = $this->service( 'scan_job' );
+		// A scan from the crontab is the right place to retest ClamAV: nobody waits for this run,
+		// and a failed self-test (clamd restarting, a server short of memory) is tried again.
+		$scanner = Sysadmin_Tools::service( 'scanner' );
+		if ( $scanner && method_exists( $scanner, 'refresh_selftest_if_stale' ) ) {
+			$scanner->refresh_selftest_if_stale();
+		}
 		$full     = (bool) $this->flag( $assoc_args, 'full', false );
 		$baseline = (bool) $this->flag( $assoc_args, 'baseline', false );
 		$malware  = (bool) $this->flag( $assoc_args, 'malware', true );
@@ -335,8 +334,10 @@ class Cli {
 		}
 
 		$state = isset( $final['state'] ) ? $final['state'] : 'unknown';
-		if ( 'unknown' !== $state ) {
-			self::record_cron_run(); // The WP-CLI cron lines run "wp wpcybersec scan --quiet", like bin/cron.php any run counts.
+		if ( 'unknown' !== $state && self::record_cron_run() ) { // The WP-CLI cron lines run "wp wpcybersec scan --quiet": any finished run counts.
+			// A scan the crontab started through WP-CLI: the lines of this version are in
+			// place, so the note about the removed bin/cron.php has done its job.
+			Sysadmin_Tools::clear_cron_removed_note();
 		}
 		if ( 'failed' === $state ) {
 			/* translators: %s: error message */
@@ -415,18 +416,22 @@ class Cli {
 	/* ------------------------------------------------------------------ */
 
 	/**
-	 * Replaces WordPress core (wp-admin, wp-includes and the core files in the WordPress folder) with the verified official files of the installed version.
+	 * Lets WordPress reinstall its core (wp-admin, wp-includes and the core files in the WordPress folder) from the official package of the installed version.
 	 *
-	 * Downloads the no-content package from wordpress.org, checks every file
-	 * against the official checksums, then swaps core with maintenance mode on.
-	 * When the site does not answer afterwards, the old core is put back. The
-	 * old core is kept as a backup for 7 days (Dashboard > Restore the previous
-	 * core). wp-config.php, wp-content and every other file stay as they are.
+	 * Starts WordPress's own updater, the same one as Dashboard > Updates >
+	 * Re-install: WordPress downloads its package from wordpress.org, switches
+	 * its maintenance mode on for a moment and overwrites its own files. The
+	 * plugin writes no core file itself and keeps no copy of the old ones.
+	 * wp-config.php, plugins, themes, uploads and every other file stay as they
+	 * are. On a site installed from a localized WordPress package the updater
+	 * also replaces WordPress's own translation files in wp-content/languages
+	 * with those of the package. Files that are not part of WordPress are not
+	 * removed: they stay reported (wp wpcybersec pending).
 	 *
 	 * ## OPTIONS
 	 *
 	 * [--yes]
-	 * : Do not ask for confirmation before the swap.
+	 * : Do not ask for confirmation.
 	 *
 	 * ## EXAMPLES
 	 *
@@ -445,43 +450,28 @@ class Cli {
 		/* translators: 1: number of files, 2: changed, 3: threats, 4: extra, 5: missing */
 		\WP_CLI::log( sprintf( __( 'Core files affected: %1$s (%2$s changed, %3$s threats, %4$s extra files in wp-admin or wp-includes, %5$s missing).', 'qartvelo-guard' ), $damage['total'], $damage['modified'], $damage['threats'], $damage['unknown'], $damage['missing'] ) );
 
-		$state = $repair->start();
-		while ( ! is_wp_error( $state ) && isset( $state['step'] ) && in_array( $state['step'], array( 'download', 'extract', 'verify' ), true ) ) {
-			$public = Core_Repair::public_state( $state );
-			\WP_CLI::log( $public['label'] . ' (' . $public['percent'] . '%)' );
-			$state = $repair->tick();
+		$auto = $repair->auto_status();
+		if ( ! $auto['ok'] ) {
+			\WP_CLI::error( $auto['reason'] );
 		}
-		if ( is_wp_error( $state ) ) {
-			\WP_CLI::error( $state->get_error_message() );
-		}
-		if ( ! isset( $state['step'] ) || 'ready' !== $state['step'] ) {
-			\WP_CLI::error( isset( $state['message'] ) && '' !== $state['message'] ? $state['message'] : __( 'The package could not be prepared.', 'qartvelo-guard' ) );
-		}
-		$confirm = Core_Repair::confirm_text( $state );
+		$confirm = Core_Repair::confirm_text( $damage );
 		\WP_CLI::log( $confirm['text'] );
 		\WP_CLI::log( $confirm['verdict'] );
 		if ( ! $this->flag( $assoc_args, 'yes', false ) ) {
-			// WP_CLI::confirm() exits on "no"; the verified package must be cleaned up first.
 			fwrite( STDOUT, $confirm['title'] . ' [y/n] ' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- interactive CLI prompt.
 			$answer = strtolower( trim( (string) fgets( STDIN ) ) );
 			if ( 'y' !== $answer && 'yes' !== $answer ) {
-				$repair->cancel();
 				\WP_CLI::log( __( 'Cancelled. Nothing was changed.', 'qartvelo-guard' ) );
 				return;
 			}
 		}
-		$state = $repair->swap();
-		while ( ! is_wp_error( $state ) && isset( $state['step'] ) && 'finish' === $state['step'] ) {
-			$state = $repair->tick();
+		\WP_CLI::log( __( 'WordPress is reinstalling its core...', 'qartvelo-guard' ) );
+		$result = $repair->reinstall();
+		if ( is_wp_error( $result ) ) {
+			\WP_CLI::error( $result->get_error_message() );
 		}
-		if ( is_wp_error( $state ) ) {
-			\WP_CLI::error( $state->get_error_message() );
-		}
-		if ( ! isset( $state['step'] ) || 'done' !== $state['step'] ) {
-			\WP_CLI::error( isset( $state['message'] ) ? (string) $state['message'] : __( 'The reinstall did not finish.', 'qartvelo-guard' ) );
-		}
-		$repair->dismiss();
-		\WP_CLI::success( (string) $state['message'] );
+		$repair->dismiss(); // The outcome is printed here; no notice on the Dashboard.
+		\WP_CLI::success( (string) $result['message'] );
 		foreach ( Core_Repair::after_steps() as $step ) {
 			\WP_CLI::log( '- ' . $step['text'] . ( ! empty( $step['code'] ) ? ' ' . $step['code'] : '' ) );
 		}
@@ -492,6 +482,11 @@ class Cli {
 			if ( is_array( $final ) && ! empty( $final['message'] ) ) {
 				\WP_CLI::log( (string) $final['message'] );
 			}
+		}
+		$repair->reset();
+		$left = $repair->damage();
+		if ( $left['unknown'] ) {
+			\WP_CLI::warning( Core_Repair::extra_text( (int) $left['unknown'], '' ) . ' ' . __( 'List them with `wp wpcybersec pending`.', 'qartvelo-guard' ) );
 		}
 	}
 
@@ -632,18 +627,16 @@ class Cli {
 	}
 
 	/**
-	 * Replaces changed WordPress core files with the official copy of the installed version.
+	 * Removed: the plugin no longer writes single files into WordPress core. Use core-reinstall.
 	 *
-	 * The current file is kept as a copy, so the change can still be viewed on the Reports page.
+	 * Earlier versions replaced one changed core file with the official copy.
+	 * Reinstalling WordPress core (wp wpcybersec core-reinstall) restores every
+	 * core file from the official package and is done by WordPress itself.
 	 *
 	 * ## OPTIONS
 	 *
-	 * <id>...
-	 * : One or more item IDs of changed core files (see wp wpcybersec threats).
-	 *
-	 * ## EXAMPLES
-	 *
-	 *     $ wp wpcybersec restore-official 24
+	 * [<id>...]
+	 * : Ignored.
 	 *
 	 * @subcommand restore-official
 	 *
@@ -651,40 +644,8 @@ class Cli {
 	 * @param array $assoc_args Associative arguments.
 	 */
 	public function restore_official( $args, $assoc_args ) {
-		unset( $assoc_args );
-		$store     = $this->service( 'store' );
-		$decisions = $this->service( 'decisions' );
-		$failed    = 0;
-		foreach ( $args as $raw ) {
-			$id   = (int) $raw;
-			$item = $id > 0 ? $store->item_get( $id ) : null;
-			if ( ! $item ) {
-				/* translators: %s: item id */
-				\WP_CLI::warning( sprintf( __( 'Item #%s not found.', 'qartvelo-guard' ), $raw ) );
-				++$failed;
-				continue;
-			}
-			if ( ! in_array( 'restore_official', Decisions::available( $item ), true ) ) {
-				/* translators: %d: item id */
-				\WP_CLI::warning( sprintf( __( 'Item #%d has no official copy to restore (only changed WordPress core files have one).', 'qartvelo-guard' ), $id ) );
-				++$failed;
-				continue;
-			}
-			$result = $decisions->apply( 'restore_official', $id );
-			if ( is_wp_error( $result ) ) {
-				/* translators: 1: item id, 2: error message */
-				\WP_CLI::warning( sprintf( __( 'Item #%1$d: %2$s', 'qartvelo-guard' ), $id, $result->get_error_message() ) );
-				++$failed;
-				continue;
-			}
-			/* translators: 1: item id, 2: path */
-			\WP_CLI::log( sprintf( __( 'Item #%1$d: the official file is back (%2$s).', 'qartvelo-guard' ), $id, $item['path'] ) );
-		}
-		if ( $failed ) {
-			/* translators: 1: failed items, 2: all items */
-			\WP_CLI::error( sprintf( __( '%1$d of %2$d items could not be processed.', 'qartvelo-guard' ), $failed, count( $args ) ) );
-		}
-		\WP_CLI::success( __( 'Done.', 'qartvelo-guard' ) );
+		unset( $args, $assoc_args );
+		\WP_CLI::error( __( 'restore-official was removed: the plugin no longer writes files into WordPress core. Run `wp wpcybersec core-reinstall` instead: WordPress reinstalls its core and so restores every core file from the official package.', 'qartvelo-guard' ) );
 	}
 
 	/**
@@ -724,14 +685,18 @@ class Cli {
 			}
 
 			if ( '' === $action ) {
-				if ( 'deny' === $verb && ! $delete && '' !== (string) $item['quarantine_path'] ) {
+				if ( 'approve' === $verb && Decisions::held_from_core( $item ) ) {
+					// Held out of wp-admin or wp-includes: the plugin does not write there (same sentence as the Reports page).
+					/* translators: 1: item id, 2: why the file is not put back, 3: command */
+					\WP_CLI::warning( sprintf( __( 'Item #%1$d: %2$s To delete the held copy: %3$s', 'qartvelo-guard' ), $id, Quarantine::core_refusal()->get_error_message(), 'wp wpcybersec deny ' . $id . ' --delete' ) );
+				} elseif ( 'deny' === $verb && ! $delete && '' !== (string) $item['quarantine_path'] ) {
 					/* translators: %d: item id */
 					\WP_CLI::warning( sprintf( __( 'Item #%d is already in quarantine. Use --delete to delete it permanently.', 'qartvelo-guard' ), $id ) );
 				} elseif ( 'deny' === $verb && Store::STATUS_PENDING === $item['status'] && in_array( $item['type'], array( Store::TYPE_FILE, Store::TYPE_THREAT ), true ) ) {
 					// A critical WordPress file: never quarantined or deleted.
-					\WP_CLI::warning( in_array( 'restore_official', $available, true )
-						/* translators: 1: item id, 2: item id */
-						? sprintf( __( 'Item #%1$d is a critical WordPress file: it cannot be quarantined or deleted. Use `wp wpcybersec restore-official %2$d` to replace it with the official copy, or `approve` to mark it safe.', 'qartvelo-guard' ), $id, $id )
+					\WP_CLI::warning( Decisions::needs_core_reinstall( $item )
+						/* translators: %d: item id */
+						? sprintf( __( 'Item #%d is a critical WordPress file: it cannot be quarantined or deleted. Use `wp wpcybersec core-reinstall` to let WordPress restore every core file from the official package, or `approve` to mark it safe.', 'qartvelo-guard' ), $id )
 						/* translators: %d: item id */
 						: sprintf( __( 'Item #%d is a critical WordPress file: it cannot be quarantined or deleted. Restore it from a backup, or `approve` to mark it safe.', 'qartvelo-guard' ), $id ) );
 				} else {

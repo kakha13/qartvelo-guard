@@ -75,7 +75,7 @@ class Settings_Page {
 				$out = $returned;
 			}
 			if ( '' !== trim( $out ) ) {
-				echo $out; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- rendered and escaped by Admin::header().
+				echo wp_kses( $out, Kses::allowed() );
 				return;
 			}
 		}
@@ -217,7 +217,7 @@ class Settings_Page {
 	 * @param string $off_value Value when off.
 	 */
 	public static function render_toggle_row( $name, $checked, $label, $help = '', array $attrs = array(), $value = '1', $off_value = '0' ) {
-		echo self::toggle_row( $name, $checked, $label, $help, $attrs, $value, $off_value ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- every part is escaped in toggle_row().
+		echo wp_kses( self::toggle_row( $name, $checked, $label, $help, $attrs, $value, $off_value ), Kses::allowed() );
 	}
 
 	/**
@@ -517,7 +517,7 @@ class Settings_Page {
 					echo '<span class="wpcs-sub wpcs-check__fix">' . esc_html( $check['fix'] ) . '</span>';
 				}
 				if ( '' !== (string) $check['code'] ) {
-					echo self::code( $check['code'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+					echo wp_kses( self::code( $check['code'] ), Kses::allowed() );
 				}
 			}
 			if ( $with_actions && ! empty( $check['actions'] ) ) {
@@ -578,7 +578,7 @@ class Settings_Page {
 		}
 		$fix = isset( $check['fix'] ) ? trim( (string) $check['fix'] ) : '';
 		echo '<span class="wpcs-sub wpcs-check__fix">' . esc_html( '' !== $fix ? $fix : __( 'Or use this:', 'qartvelo-guard' ) ) . '</span>';
-		echo self::code( $code ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+		echo wp_kses( self::code( $code ), Kses::allowed() );
 	}
 
 	/**
@@ -599,7 +599,7 @@ class Settings_Page {
 			}
 			echo '<li>' . esc_html( isset( $step['text'] ) ? (string) $step['text'] : '' );
 			if ( ! empty( $step['code'] ) ) {
-				echo self::code( (string) $step['code'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+				echo wp_kses( self::code( (string) $step['code'] ), Kses::allowed() );
 			}
 			echo '</li>';
 		}
@@ -833,7 +833,7 @@ class Settings_Page {
 				$content = preg_replace( '/role="radiogroup"/', 'role="radiogroup" aria-labelledby="' . esc_attr( $id ) . '"', (string) $content, 1 );
 			}
 		}
-		echo '<div class="wpcs-field__control">' . $content; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built from escaped parts.
+		echo wp_kses( '<div class="wpcs-field__control">' . $content, Kses::allowed() );
 		if ( '' !== $help ) {
 			echo '<span class="wpcs-field__help">' . esc_html( $help ) . '</span>';
 		}
@@ -917,7 +917,7 @@ class Settings_Page {
 		if ( 'custom' === $s['protection_level'] ) {
 			self::notice( __( 'Custom: your settings do not match a preset. Pick a level to reset the settings below to its values.', 'qartvelo-guard' ), 'info' );
 		}
-		echo self::level_cards( 'protection_level', $s['protection_level'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in level_cards().
+		echo wp_kses( self::level_cards( 'protection_level', $s['protection_level'] ), Kses::allowed() );
 		echo '<input type="hidden" name="wpcs_level_synced" value="0" data-wpcs-level-synced>';
 		echo '<p class="wpcs-custom-hint wpcs-hidden" data-wpcs-custom-hint></p>';
 		$this->card_close();
@@ -1075,7 +1075,7 @@ class Settings_Page {
 
 		// Optional statistics for the developer (off by default).
 		$this->card_open( 'wpcs-stats', 'chart-bar', __( 'Usage statistics', 'qartvelo-guard' ) );
-		echo self::share_stats_box( ! empty( $s['share_stats'] ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside.
+		echo wp_kses( self::share_stats_box( ! empty( $s['share_stats'] ) ), Kses::allowed() );
 		$this->card_close();
 
 		$this->form_close( __( 'Changes apply as soon as you save.', 'qartvelo-guard' ) );
@@ -1248,7 +1248,7 @@ class Settings_Page {
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display only: the fold opens when a "change" link points here.
 		$open = '' !== $current && ! empty( $_GET['hosting'] );
 		echo '<div class="wpcs-hosting" id="wpcs-hosting" data-wpcs-hosting="' . esc_attr( $info['id'] ) . '">';
-		echo '<p class="wpcs-hosting__line"><span class="dashicons dashicons-admin-site-alt3" aria-hidden="true"></span><strong>' . esc_html( $line ) . '</strong> ' . $badge . '</p>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- badge is escaped.
+		echo wp_kses( '<p class="wpcs-hosting__line"><span class="dashicons dashicons-admin-site-alt3" aria-hidden="true"></span><strong>' . esc_html( $line ) . '</strong> ' . $badge . '</p>', Kses::allowed() );
 		echo '<details class="wpcs-manual wpcs-hosting__change"' . ( $open ? ' open' : '' ) . '><summary>' . esc_html__( 'Change', 'qartvelo-guard' ) . '</summary>';
 		echo '<p class="wpcs-sub">' . esc_html( $hosting->confidence_text( $info ) ) . '</p>';
 		if ( ! empty( $info['signals'] ) ) {
@@ -1358,12 +1358,12 @@ class Settings_Page {
 			echo '</div>';
 			if ( '' !== $clam['hint_code'] ) {
 				echo '<p class="wpcs-sub">' . esc_html( $clam['hint'] ) . '</p>';
-				echo self::code( $clam['hint_code'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+				echo wp_kses( self::code( $clam['hint_code'] ), Kses::allowed() );
 			}
 		} elseif ( in_array( $clam['state'], array( 'broken', 'slow' ), true ) || ( '' !== $clam['hint'] && in_array( $clam['state'], array( 'uploads' ), true ) ) ) {
 			self::notice( $clam['label'] . ( '' !== $clam['hint'] ? ' ' . $clam['hint'] : '' ), 'broken' === $clam['state'] ? 'bad' : 'warn' );
 			if ( '' !== $clam['hint_code'] ) {
-				echo self::code( $clam['hint_code'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+				echo wp_kses( self::code( $clam['hint_code'] ), Kses::allowed() );
 			}
 		}
 
@@ -1444,7 +1444,7 @@ class Settings_Page {
 		echo '<ul class="wpcs-live">';
 		foreach ( $tools->antivirus_live() as $row ) {
 			$state = isset( $states[ $row['state'] ] ) ? $states[ $row['state'] ] : $states['unknown'];
-			echo '<li class="wpcs-live__row is-' . esc_attr( $row['state'] ) . '"><span class="dashicons dashicons-' . esc_attr( $state[0] ) . '" aria-hidden="true"></span><span class="wpcs-live__label">' . esc_html( $row['label'] ) . '</span>' . $this->badge( $row['text'], $state[1] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- badge is escaped.
+			echo wp_kses( '<li class="wpcs-live__row is-' . esc_attr( $row['state'] ) . '"><span class="dashicons dashicons-' . esc_attr( $state[0] ) . '" aria-hidden="true"></span><span class="wpcs-live__label">' . esc_html( $row['label'] ) . '</span>' . $this->badge( $row['text'], $state[1] ), Kses::allowed() );
 			if ( ! empty( $row['hint'] ) || ! empty( $row['code'] ) ) {
 				// Why it is unknown or not set up, and the root command for it.
 				echo '<div class="wpcs-live__hint">';
@@ -1452,7 +1452,7 @@ class Settings_Page {
 					echo '<span class="wpcs-sub">' . esc_html( $row['hint'] ) . '</span>';
 				}
 				if ( ! empty( $row['code'] ) ) {
-					echo self::code( (string) $row['code'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+					echo wp_kses( self::code( (string) $row['code'] ), Kses::allowed() );
 				}
 				echo '</div>';
 			}
@@ -1512,7 +1512,7 @@ class Settings_Page {
 			echo '<p class="wpcs-row"><a class="button" href="' . esc_url( $this->action_url( 'cgav' ) ) . '"><span class="dashicons dashicons-download" aria-hidden="true"></span>' . esc_html__( 'Download server script (cgav)', 'qartvelo-guard' ) . '</a></p>';
 			echo '<details class="wpcs-cmds"><summary><span class="dashicons dashicons-editor-code" aria-hidden="true"></span><span class="wpcs-cmds__show">' . esc_html__( 'Show commands', 'qartvelo-guard' ) . '</span><span class="wpcs-cmds__hide">' . esc_html__( 'Hide commands', 'qartvelo-guard' ) . '</span><span class="wpcs-cmds__label">' . esc_html__( 'Install everything in one paste (as root)', 'qartvelo-guard' ) . '</span></summary><div class="wpcs-cmds__body">';
 			echo '<p class="wpcs-sub">' . esc_html__( 'Paste the whole block into an SSH session as root. It saves the script, installs the cgav command and adds this site to the maldet monitor. On a server with more sites, paste the block of each site, or run cgav add-site for each: the engines are installed only once.', 'qartvelo-guard' ) . '</p>';
-			echo self::code( $block ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+			echo wp_kses( self::code( $block ), Kses::allowed() );
 			echo '</div></details>';
 			echo '<dl class="wpcs-cgav">';
 			foreach ( Sysadmin_Tools::cgav_commands() as $command => $what ) {
@@ -1529,7 +1529,7 @@ class Settings_Page {
 		if ( '' === $maldet['binary'] && $maldet['supported'] ) {
 			$install = Clamav_Guide::maldet_install_steps();
 			echo '<p class="wpcs-muted">' . esc_html( $install[0]['text'] ) . '</p>';
-			echo self::commands( $install[0]['code'], __( 'Install (as root)', 'qartvelo-guard' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in commands().
+			echo wp_kses( self::commands( $install[0]['code'], __( 'Install (as root)', 'qartvelo-guard' ) ), Kses::allowed() );
 		}
 		$no_monitor = '' !== $maldet['binary'] && false === $maldet['monitor'];
 		if ( $no_monitor ) {
@@ -1552,10 +1552,10 @@ class Settings_Page {
 	 */
 	private function engine( $name, $state, $tone, array $rows ) {
 		echo '<div class="wpcs-engine">';
-		echo '<div class="wpcs-engine__head"><strong>' . esc_html( $name ) . '</strong>' . $this->badge( $state, $tone ) . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- badge is escaped.
+		echo wp_kses( '<div class="wpcs-engine__head"><strong>' . esc_html( $name ) . '</strong>' . $this->badge( $state, $tone ) . '</div>', Kses::allowed() );
 		echo '<dl class="wpcs-engine__rows">';
 		foreach ( $rows as $label => $value ) {
-			echo '<div><dt>' . esc_html( $label ) . '</dt><dd>' . $value . '</dd></div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built from escaped parts.
+			echo wp_kses( '<div><dt>' . esc_html( $label ) . '</dt><dd>' . $value . '</dd></div>', Kses::allowed() );
 		}
 		echo '</dl></div>';
 	}
@@ -1588,10 +1588,10 @@ class Settings_Page {
 			echo '<li class="wpcs-devlist__item">';
 			echo '<div class="wpcs-devlist__head"><strong>' . esc_html( $item['title'] ) . '</strong>';
 			if ( '' !== $item['error'] ) {
-				echo $this->badge( __( 'Failed from the admin panel', 'qartvelo-guard' ), 'high' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in badge().
+				echo wp_kses( $this->badge( __( 'Failed from the admin panel', 'qartvelo-guard' ), 'high' ), Kses::allowed() );
 			}
 			if ( $item['optional'] ) {
-				echo $this->badge( __( 'Optional', 'qartvelo-guard' ), 'muted' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in badge().
+				echo wp_kses( $this->badge( __( 'Optional', 'qartvelo-guard' ), 'muted' ), Kses::allowed() );
 			}
 			echo '</div>';
 			if ( '' !== $item['why'] ) {
@@ -1685,7 +1685,7 @@ class Settings_Page {
 	 */
 	private function section_scan( array $s, Sysadmin_Tools $tools ) {
 		unset( $tools );
-		$abspath = untrailingslashit( wp_normalize_path( ABSPATH ) );
+		$abspath = untrailingslashit( \WPCyberSecurity\Paths::wp_root() );
 		$parent  = dirname( $abspath );
 
 		$this->card_open( 'wpcs-scan', 'search', __( 'Scan scope and performance', 'qartvelo-guard' ) );
@@ -1811,7 +1811,7 @@ class Settings_Page {
 		);
 		echo '<table class="wpcs-status-table"><tbody>';
 		foreach ( $rows as $row ) {
-			echo '<tr><th scope="row">' . esc_html( $row[0] ) . '</th><td>' . $row[1] . '</td></tr>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built from escaped parts.
+			echo wp_kses( '<tr><th scope="row">' . esc_html( $row[0] ) . '</th><td>' . $row[1] . '</td></tr>', Kses::allowed() );
 		}
 		echo '</tbody></table>';
 
@@ -1825,18 +1825,18 @@ class Settings_Page {
 				// Where the other site's line may be set (often the shared php.ini), and the command that finds it.
 				$where = $manager->foreign_prepend_hint();
 				echo '<p class="wpcs-sub">' . esc_html( $where['text'] ) . '</p>';
-				echo self::code( (string) $where['code'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+				echo wp_kses( self::code( (string) $where['code'] ), Kses::allowed() );
 				echo '<p class="wpcs-sub">' . esc_html( $where['note'] ) . '</p>';
 			}
 			if ( ! empty( $status['conflict_snippet'] ) && empty( $status['conflict_foreign'] ) ) {
-				echo self::code( (string) $status['conflict_snippet'], __( 'Add at the top of the other prepend file', 'qartvelo-guard' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+				echo wp_kses( self::code( (string) $status['conflict_snippet'], __( 'Add at the top of the other prepend file', 'qartvelo-guard' ) ), Kses::allowed() );
 			}
 		} elseif ( 'confirmed' === $state ) {
 			self::notice( __( 'The guard runs: the last live test request to the site was answered with the guard loaded. This request cannot tell by itself (PHP on the command line and the development server do not read .user.ini or .htaccess).', 'qartvelo-guard' ), 'ok' );
 		} elseif ( $ols ) {
 			// OpenLiteSpeed: .user.ini has the line, lsphp has not read it. The exact next step, not "within 5 minutes".
 			self::notice( __( 'Installed and written to .user.ini, but PHP does not load it yet.', 'qartvelo-guard' ) . ' ' . $ols['text'], 'warn' );
-			echo self::code( (string) $ols['code'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+			echo wp_kses( self::code( (string) $ols['code'] ), Kses::allowed() );
 			echo '<p class="wpcs-sub">' . esc_html( $ols['next'] ) . '</p>';
 		} elseif ( 'installed' === $state ) {
 			self::notice( __( 'Installed, but PHP does not load it yet. Use "Install and switch on the early guard" below, or set auto_prepend_file with the recommended snippet, then reload this page.', 'qartvelo-guard' ), 'warn' );
@@ -1910,7 +1910,7 @@ class Settings_Page {
 				}
 			}
 			if ( $recommended && empty( $status['active'] ) ) {
-				echo '<h3 class="wpcs-subhead">' . esc_html__( 'Recommended for this server', 'qartvelo-guard' ) . ' ' . $this->badge( isset( $status['sapi'] ) ? (string) $status['sapi'] : PHP_SAPI, 'info' ) . '</h3>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- badge is escaped.
+				echo wp_kses( '<h3 class="wpcs-subhead">' . esc_html__( 'Recommended for this server', 'qartvelo-guard' ) . ' ' . $this->badge( isset( $status['sapi'] ) ? (string) $status['sapi'] : PHP_SAPI, 'info' ) . '</h3>', Kses::allowed() );
 				// The hosting panel's way as numbered steps (with how PHP picks it up), else the snippet for this PHP SAPI.
 				if ( 'panel' !== $recommended[0]['id'] || ! self::render_panel_steps( array( 'prepend', 'php_restart' ) ) ) {
 					$this->render_snippet( $recommended[0] );
@@ -1939,7 +1939,7 @@ class Settings_Page {
 		if ( ! empty( $snippet['file'] ) ) {
 			$label .= ( '' !== $label ? ' - ' : '' ) . $snippet['file'];
 		}
-		echo self::code( (string) $snippet['code'], $label, isset( $snippet['help'] ) ? (string) $snippet['help'] : '' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+		echo wp_kses( self::code( (string) $snippet['code'], $label, isset( $snippet['help'] ) ? (string) $snippet['help'] : '' ), Kses::allowed() );
 	}
 
 	/**
@@ -1964,15 +1964,21 @@ class Settings_Page {
 		} elseif ( 'off' !== $s['scan_schedule'] ) {
 			$state .= ' <span class="wpcs-muted">' . esc_html__( 'No scan is scheduled yet.', 'qartvelo-guard' ) . '</span>';
 		}
-		echo '<div class="wpcs-inline-status wpcs-card__lead">' . $state . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built from escaped parts.
+		echo wp_kses( '<div class="wpcs-inline-status wpcs-card__lead">' . $state . '</div>', Kses::allowed() );
+		// After the update that removed bin/cron.php on a site that used real cron: its crontab may still
+		// start that file. The link forgets the note for every administrator (Admin::handle_dismiss_notice()).
+		$removed = Sysadmin_Tools::cron_removed_note();
+		if ( '' !== $removed ) {
+			echo '<div class="wpcs-notice wpcs-notice--warn wpcs-notice--compact"><span class="dashicons dashicons-warning" aria-hidden="true"></span><p>' . esc_html( $removed ) . ' <a href="' . esc_url( Admin::dismiss_url( 'cron_note' ) ) . '">' . esc_html__( 'Done, hide this', 'qartvelo-guard' ) . '</a></p></div>';
+		}
 		// The first variant opens when no real cron job runs yet, or scheduled tasks are late.
 		$missing = $last_cli < time() - 2 * HOUR_IN_SECONDS || self::is_open( self::check_status( $by_id, 'wp_cron' ) );
 		// The hosting panel's own way first; the crontab variants fold away under "Other ways".
 		$panel = $missing ? self::render_panel_steps( 'cron' ) : false;
-		self::other_ways_open( $panel, __( 'Other ways: crontab, WP-CLI', 'qartvelo-guard' ) );
+		self::other_ways_open( $panel, __( 'Other ways: crontab with or without WP-CLI', 'qartvelo-guard' ) );
 		foreach ( $tools->cron_snippets() as $i => $snippet ) {
 			echo '<div class="wpcs-cmd-block"><strong class="wpcs-cmd-block__title">' . esc_html( $snippet['label'] ) . '</strong>';
-			echo self::commands( $snippet['code'], $snippet['file'], $snippet['help'], 0 === $i && $missing && ! $panel ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in commands().
+			echo wp_kses( self::commands( $snippet['code'], $snippet['file'], $snippet['help'], 0 === $i && $missing && ! $panel ), Kses::allowed() );
 			echo '</div>';
 		}
 		self::other_ways_close( $panel );
@@ -2060,7 +2066,7 @@ class Settings_Page {
 			'other' => $this->badge( __( 'Blocking rules present', 'qartvelo-guard' ), 'ok' ),
 			'none'  => $this->badge( __( 'No blocking rule', 'qartvelo-guard' ), 'medium' ),
 		);
-		echo '<h3 class="wpcs-subhead">' . esc_html__( 'Apache and LiteSpeed', 'qartvelo-guard' ) . ' ' . $labels[ $status ] . '</h3>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- badge is escaped.
+		echo wp_kses( '<h3 class="wpcs-subhead">' . esc_html__( 'Apache and LiteSpeed', 'qartvelo-guard' ) . ' ' . $labels[ $status ] . '</h3>', Kses::allowed() );
 		if ( 'nginx' === $server ) {
 			// nginx never reads .htaccess: no button that would only look like a fix.
 			echo '<p class="wpcs-muted">' . esc_html__( 'This server runs nginx, which ignores .htaccess files. Use the nginx rule below instead.', 'qartvelo-guard' ) . '</p>';
@@ -2070,17 +2076,17 @@ class Settings_Page {
 			echo '<span class="wpcs-muted wpcs-inline-help">' . esc_html__( 'Adds the block between markers and keeps everything else, then tests that PHP no longer runs in uploads. If the server answers with an error, or PHP still runs, the change is undone.', 'qartvelo-guard' ) . '</span>';
 			echo '</div>';
 		}
-		echo self::commands( $tools->apache_uploads_rules(), 'wp-content/uploads/.htaccess', '', 'none' === $status && 'nginx' !== $server ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in commands().
+		echo wp_kses( self::commands( $tools->apache_uploads_rules(), Sysadmin_Tools::uploads_htaccess_label(), '', 'none' === $status && 'nginx' !== $server ), Kses::allowed() );
 
-		echo '<h3 class="wpcs-subhead">nginx' . ( 'nginx' === $server ? ' ' . $this->badge( __( 'This server', 'qartvelo-guard' ), 'info' ) : '' ) . '</h3>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- badge is escaped.
+		echo wp_kses( '<h3 class="wpcs-subhead">nginx' . ( 'nginx' === $server ? ' ' . $this->badge( __( 'This server', 'qartvelo-guard' ), 'info' ) : '' ) . '</h3>', Kses::allowed() );
 		$nginx_open = 'nginx' === $server && ( self::is_open( self::check_status( $by_id, 'uploads_php' ) ) || self::is_open( self::check_status( $by_id, 'quarantine_web' ) ) );
-		echo self::commands( $tools->nginx_rules(), __( 'Server block', 'qartvelo-guard' ), '', $nginx_open ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in commands().
+		echo wp_kses( self::commands( $tools->nginx_rules(), __( 'Server block', 'qartvelo-guard' ), '', $nginx_open ), Kses::allowed() );
 		self::other_ways_close( $panel );
 
 		echo '<h3 class="wpcs-subhead">' . esc_html__( 'File permissions', 'qartvelo-guard' ) . '</h3>';
 		$perms_open = self::is_open( self::check_status( $by_id, 'wp_config_perms' ) ) || 'fail' === self::check_status( $by_id, 'data_dir' );
 		echo '<p class="wpcs-muted">' . esc_html__( 'Safe owners and permissions for the WordPress folder, wp-config.php and the data folder.', 'qartvelo-guard' ) . '</p>';
-		echo self::commands( $tools->permission_commands(), __( 'Shell (as root)', 'qartvelo-guard' ), '', $perms_open ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in commands().
+		echo wp_kses( self::commands( $tools->permission_commands(), __( 'Shell (as root)', 'qartvelo-guard' ), '', $perms_open ), Kses::allowed() );
 		echo '<p class="wpcs-muted">';
 		printf(
 			/* translators: %s: link to the environment check */
@@ -2102,11 +2108,11 @@ class Settings_Page {
 		echo '<h3 class="wpcs-subhead">' . esc_html__( 'fapolicyd (RHEL, Rocky, Alma, Fedora)', 'qartvelo-guard' ) . '</h3>';
 		echo '<p>' . esc_html__( 'Let PHP open only the PHP files you trust. The trust list contains every trusted file with its size and SHA-256, taken from the last baseline and approvals.', 'qartvelo-guard' ) . '</p>';
 		echo '<div class="wpcs-row wpcs-card__actions"><a class="button" href="' . esc_url( $this->action_url( 'export', array( 'type' => 'fapolicyd' ) ) ) . '"><span class="dashicons dashicons-download" aria-hidden="true"></span>' . esc_html__( 'Download trust list', 'qartvelo-guard' ) . '</a></div>';
-		echo self::commands( $tools->fapolicyd_rules(), __( 'Rules', 'qartvelo-guard' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in commands().
+		echo wp_kses( self::commands( $tools->fapolicyd_rules(), __( 'Rules', 'qartvelo-guard' ) ), Kses::allowed() );
 
 		echo '<h3 class="wpcs-subhead">' . esc_html__( 'inotify watcher', 'qartvelo-guard' ) . '</h3>';
 		echo '<p>' . esc_html__( 'Starts a scan seconds after files change on disk, instead of waiting for the next scheduled scan.', 'qartvelo-guard' ) . '</p>';
-		echo self::commands( $tools->inotify_script(), Sysadmin_Tools::inotify_script_path() ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in commands().
+		echo wp_kses( self::commands( $tools->inotify_script(), Sysadmin_Tools::inotify_script_path() ), Kses::allowed() );
 
 		echo '<h3 class="wpcs-subhead">' . esc_html__( 'Linux Malware Detect (maldet)', 'qartvelo-guard' ) . '</h3>';
 		echo '<p class="wpcs-muted">';
@@ -2136,7 +2142,7 @@ class Settings_Page {
 			if ( Admin::call( 'hardening', 'descriptor', array( 'hmac_key' ), null ) ) {
 				Admin::call( 'hardening', 'render_fix', array( 'hmac_key' ), null ); // "Add the key for me", with the by-hand steps, as in the wizard.
 			} else {
-				echo self::code( $tools->hmac_snippet(), 'wp-config.php', __( 'This key was generated just now. Keep it only in wp-config.php.', 'qartvelo-guard' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+				echo wp_kses( self::code( $tools->hmac_snippet(), 'wp-config.php', __( 'This key was generated just now. Keep it only in wp-config.php.', 'qartvelo-guard' ) ), Kses::allowed() );
 			}
 		}
 		$this->card_close();

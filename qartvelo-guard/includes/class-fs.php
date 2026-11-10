@@ -32,8 +32,10 @@ final class Fs {
 	 */
 	public static function direct() {
 		if ( null === self::$direct ) {
-			if ( ! class_exists( 'WP_Filesystem_Direct', false ) ) {
+			if ( ! class_exists( 'WP_Filesystem_Base', false ) ) {
 				require_once ABSPATH . 'wp-admin/includes/class-wp-filesystem-base.php';
+			}
+			if ( ! class_exists( 'WP_Filesystem_Direct', false ) ) {
 				require_once ABSPATH . 'wp-admin/includes/class-wp-filesystem-direct.php';
 			}
 			self::$direct = new \WP_Filesystem_Direct( null );

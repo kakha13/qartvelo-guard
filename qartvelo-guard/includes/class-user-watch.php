@@ -600,12 +600,7 @@ class User_Watch {
 				$user->set_role( 'subscriber' );
 			}
 			if ( $is_super ) {
-				if ( ! function_exists( 'revoke_super_admin' ) && defined( 'ABSPATH' ) && is_readable( ABSPATH . 'wp-admin/includes/ms.php' ) ) {
-					require_once ABSPATH . 'wp-admin/includes/ms.php';
-				}
-				if ( function_exists( 'revoke_super_admin' ) ) {
-					revoke_super_admin( $user_id );
-				}
+				revoke_super_admin( $user_id ); // wp-includes/capabilities.php: always loaded.
 			}
 		} finally {
 			$this->silent = false;

@@ -357,6 +357,30 @@ class Sysadmin_Tools {
 	}
 
 	/**
+	 * Writes the body of a generated file download to the response.
+	 *
+	 * The downloads that use it (cgav.sh, the fapolicyd trust list, the
+	 * developer instructions as .txt) are plain text files sent as an
+	 * attachment with X-Content-Type-Options: nosniff, so a browser saves them
+	 * and never renders them. They must arrive byte for byte: HTML escaping
+	 * would break a shell script or a server rule. Like a CSV export, the body
+	 * is therefore written to the output stream instead of being printed into
+	 * a page. The caller sends the headers first and exits afterwards.
+	 *
+	 * @param string|string[]|\Traversable $chunks The text, or its pieces in order.
+	 */
+	public static function send_file_body( $chunks ) {
+		$out = fopen( 'php://output', 'wb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- the response body of a file download (php://output), not a file on disk; WP_Filesystem cannot write to it.
+		if ( ! is_resource( $out ) ) {
+			return;
+		}
+		foreach ( is_string( $chunks ) ? array( $chunks ) : $chunks as $chunk ) {
+			fwrite( $out, (string) $chunk ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite -- see fopen() above.
+		}
+		fclose( $out ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose -- see fopen() above.
+	}
+
+	/**
 	 * Redirects to the referring admin page, or the fallback.
 	 *
 	 * @param string $fallback Fallback URL.
@@ -425,8 +449,8 @@ class Sysadmin_Tools {
 	}
 
 	/**
-	 * PHP CLI binary for cron snippets: PHP_BINARY when it looks like a CLI
-	 * binary, a CLI binary next to php-fpm, lsphp (LiteSpeed, CyberPanel:
+	 * PHP CLI binary for the WP-CLI commands of the snippets (wp_cli()):
+	 * PHP_BINARY when it looks like a CLI binary, a CLI binary next to php-fpm, lsphp (LiteSpeed, CyberPanel:
 	 * /usr/local/lsws/lsphpXX/bin/lsphp next to bin/php) or php-cgi when one
 	 * exists, php-cgi itself when that is all there is, else "php".
 	 *
@@ -466,27 +490,12 @@ class Sysadmin_Tools {
 			if ( 0 === strpos( $base, 'lsphp' ) && ! self::path_allowed( dirname( $bin ) . '/php' ) ) {
 				return dirname( $bin ) . '/php';
 			}
-			// php-cgi works too (bin/cron.php accepts it from a shell): better than a "php" that may not exist.
+			// Better than a "php" that may not exist (wp_cli() falls back to plain "wp" for php-cgi).
 			if ( 0 === strpos( $base, 'php-cgi' ) || 0 === strpos( $base, 'phpcgi' ) ) {
 				return self::stable_binary( $bin );
 			}
 		}
 		return 'php';
-	}
-
-	/**
-	 * Shell command that starts PHP for bin/cron.php: the binary, plus -q for
-	 * php-cgi (hides the HTTP headers it prints).
-	 *
-	 * @return string Shell-quoted.
-	 */
-	public static function php_command() {
-		$bin = self::php_binary();
-		$cmd = self::shell_arg( $bin );
-		if ( preg_match( '/^php-?cgi/i', basename( $bin ) ) ) {
-			$cmd .= ' -q';
-		}
-		return $cmd;
 	}
 
 	/**
@@ -508,6 +517,25 @@ class Sysadmin_Tools {
 		}
 		$wp = self::wp_cli_path();
 		return self::shell_arg( $bin ) . ' ' . ( '' !== $wp ? self::shell_arg( $wp ) : '"$(command -v wp)"' );
+	}
+
+	/**
+	 * How a crontab line (or another command nobody types, such as the inotify
+	 * watcher) starts WP-CLI. Like wp_cli(), but a plain "wp" becomes the full
+	 * path to the program when it is known (wp_cli_path()): cron runs with
+	 * PATH=/usr/bin:/bin and WP-CLI is usually in /usr/local/bin, so a bare
+	 * "wp" would not be found there. "wp" stays only when the path is unknown.
+	 *
+	 * @param string|null $bin PHP binary of the site (default: php_binary()).
+	 * @return string Shell text, already quoted.
+	 */
+	public static function wp_cli_cron( $bin = null ) {
+		$cli = self::wp_cli( $bin );
+		if ( 'wp' !== $cli ) {
+			return $cli; // Names the PHP binary and the wp program already.
+		}
+		$wp = self::wp_cli_path();
+		return '' !== $wp ? self::shell_arg( $wp ) : 'wp';
 	}
 
 	/**
@@ -563,8 +591,8 @@ class Sysadmin_Tools {
 	}
 
 	/**
-	 * " --url=<network address>" for bin/cron.php on multisite (WordPress cannot
-	 * pick the site without it), '' on single sites.
+	 * " --url=<network address>" for the WP-CLI cron lines on multisite (WordPress
+	 * cannot pick the site without it), '' on single sites.
 	 *
 	 * @return string Leading space included.
 	 */
@@ -590,10 +618,10 @@ class Sysadmin_Tools {
 	}
 
 	/**
-	 * @return string ABSPATH without trailing slash, normalized.
+	 * @return string The WordPress folder (Paths::wp_root()) without the trailing slash.
 	 */
 	private static function abspath() {
-		return untrailingslashit( wp_normalize_path( ABSPATH ) );
+		return untrailingslashit( Paths::wp_root() );
 	}
 
 	/**
@@ -720,19 +748,17 @@ class Sysadmin_Tools {
 			/* translators: %s: WordPress version */
 			'detail' => sprintf( __( 'WordPress %s is up to date.', 'qartvelo-guard' ), $version ),
 		);
-		if ( ! function_exists( 'get_core_updates' ) && is_readable( ABSPATH . 'wp-admin/includes/update.php' ) ) {
+		if ( ! function_exists( 'get_core_updates' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/update.php';
 		}
-		if ( function_exists( 'get_core_updates' ) ) {
-			$updates = get_core_updates( array( 'dismissed' => false ) );
-			foreach ( (array) $updates as $update ) {
-				if ( is_object( $update ) && isset( $update->response, $update->current ) && 'upgrade' === $update->response ) {
-					$check['status'] = 'warn';
-					/* translators: 1: available version, 2: installed version */
-					$check['detail'] = sprintf( __( 'WordPress %1$s is available. This site runs %2$s.', 'qartvelo-guard' ), $update->current, $version );
-					$check['fix']    = __( 'Update from Dashboard > Updates. Security fixes ship in every release.', 'qartvelo-guard' );
-					break;
-				}
+		$updates = get_core_updates( array( 'dismissed' => false ) );
+		foreach ( (array) $updates as $update ) {
+			if ( is_object( $update ) && isset( $update->response, $update->current ) && 'upgrade' === $update->response ) {
+				$check['status'] = 'warn';
+				/* translators: 1: available version, 2: installed version */
+				$check['detail'] = sprintf( __( 'WordPress %1$s is available. This site runs %2$s.', 'qartvelo-guard' ), $update->current, $version );
+				$check['fix']    = __( 'Update from Dashboard > Updates. Security fixes ship in every release.', 'qartvelo-guard' );
+				break;
 			}
 		}
 		return $check;
@@ -964,20 +990,31 @@ class Sysadmin_Tools {
 			'label' => __( 'Scheduled tasks (cron)', 'qartvelo-guard' ),
 		);
 		$snippets = $this->cron_snippets();
+		// After the update that removed bin/cron.php on a site that used real cron: its crontab may still start that file.
+		$removed = self::cron_removed_note();
 		if ( $next && $next < time() - HOUR_IN_SECONDS ) {
 			$check['status'] = 'warn';
 			/* translators: %s: time span, e.g. "3 hours" */
 			$check['detail'] = sprintf( __( 'Scheduled tasks are late: the last scheduled scan was due %s ago, so cron is not running.', 'qartvelo-guard' ), human_time_diff( $next ) );
 			$check['fix']    = __( 'Add a real cron job on the server:', 'qartvelo-guard' );
 			$check['code']   = $snippets[0]['code'];
-		} elseif ( $disabled ) {
+		} elseif ( $disabled && '' === $removed ) {
 			$check['status'] = 'pass';
 			$check['detail'] = __( 'WP-Cron is disabled and tasks run on time, so a real cron job is in place.', 'qartvelo-guard' );
+		} elseif ( $disabled ) {
+			// Tasks are on time (something runs WordPress cron), but scan lines of the crontab may still start the removed file.
+			$check['status'] = 'info';
+			$check['detail'] = __( 'WP-Cron on page visits is off and scheduled tasks run on time.', 'qartvelo-guard' );
+			$check['fix']    = __( 'Use these crontab lines:', 'qartvelo-guard' );
+			$check['code']   = $snippets[0]['code'];
 		} else {
 			$check['status'] = 'info';
 			$check['detail'] = __( 'WP-Cron runs when people visit the site. On quiet sites scheduled scans can start late.', 'qartvelo-guard' );
 			$check['fix']    = __( 'Recommended for system administrators: a real cron job (all variants are in Settings > Advanced).', 'qartvelo-guard' );
 			$check['code']   = $snippets[0]['code'];
+		}
+		if ( '' !== $removed && 'pass' !== $check['status'] ) {
+			$check['detail'] .= ' ' . $removed;
 		}
 		return $check;
 	}
@@ -987,7 +1024,7 @@ class Sysadmin_Tools {
 	 */
 	private function check_prepend() {
 		$prepend   = trim( (string) ini_get( 'auto_prepend_file' ) );
-		$bootstrap = (string) self::call( 'guard_manager', 'bootstrap_path', array(), ABSPATH . 'wpcybersec-guard.php' );
+		$bootstrap = (string) self::call( 'guard_manager', 'bootstrap_path', array(), Paths::wp_root() . 'wpcybersec-guard.php' );
 		$check     = array(
 			'id'    => 'auto_prepend_file',
 			'label' => __( 'auto_prepend_file', 'qartvelo-guard' ),
@@ -1569,7 +1606,7 @@ class Sysadmin_Tools {
 	 */
 	public static function world_writable_roots() {
 		$abs    = self::abspath();
-		$themes = function_exists( 'get_theme_root' ) ? (string) get_theme_root() : WP_CONTENT_DIR . '/themes';
+		$themes = (string) get_theme_root();
 		$roots  = array(
 			array( WPCYBERSEC_DIR, false ),
 			// wp-content and the WordPress folder with one level of entries: languages
@@ -1579,7 +1616,7 @@ class Sysadmin_Tools {
 			array( WP_CONTENT_DIR, true ),
 			array( WP_PLUGIN_DIR, true ),
 			array( $themes, true ),
-			array( defined( 'WPMU_PLUGIN_DIR' ) ? WPMU_PLUGIN_DIR : WP_CONTENT_DIR . '/mu-plugins', false ),
+			array( WPMU_PLUGIN_DIR, false ),
 			array( $abs, true ),
 			array( $abs . '/wp-admin', false ),
 			array( $abs . '/' . WPINC, false ),
@@ -2462,93 +2499,161 @@ class Sysadmin_Tools {
 	/* ------------------------------------------------------------------ */
 
 	/**
+	 * Whether WP-CLI is installed on this server, as far as PHP can tell: the
+	 * request runs under WP-CLI, or the wp program is in one of its usual places.
+	 *
+	 * @return bool
+	 */
+	public static function has_wp_cli() {
+		return ( defined( 'WP_CLI' ) && WP_CLI ) || '' !== self::wp_cli_path();
+	}
+
+	/**
+	 * Address a system cron job requests to run WordPress cron: wp-cron.php of
+	 * the site (the main site on multisite, where every plugin event lives).
+	 * The empty doing_wp_cron key is what tells wp-cron.php, and
+	 * record_wp_cron_request(), that the request was not started by a page visit.
+	 *
+	 * @return string
+	 */
+	public static function wp_cron_url() {
+		return network_site_url( 'wp-cron.php?doing_wp_cron' );
+	}
+
+	/**
 	 * The recommended real cron setup: the one source every screen uses (the
 	 * Environment check, the wizard's Server step, Settings > Advanced > Real
-	 * cron, the hosting panel steps and the developer instructions). A quick
-	 * scan every hour, a full malware scan every night, and WordPress cron
-	 * every 5 minutes. bin/cron.php gets --quiet, --wp and (multisite) --url;
-	 * only its normal output goes to /dev/null, so errors still reach the
-	 * cron mail.
+	 * cron, the hosting panel steps and the developer instructions).
 	 *
-	 * Panels that ask for a PHP script and its arguments separately (Plesk
-	 * "Run a PHP script") use script and args; url is set when the job is
-	 * better added as "fetch a URL" (WordPress cron on multisite).
+	 * With WP-CLI: a quick scan every hour, a full malware scan every night
+	 * ("wp wpcybersec scan", with --path, --quiet and on multisite --url) and
+	 * the due WordPress cron events every 5 minutes. The lines name the wp
+	 * program by its full path when it is known (wp_cli_cron()).
 	 *
-	 * @return array[] Each { id, schedule, when, command, line, script, args, url }.
+	 * Without WP-CLI: one job that requests wp-cron.php every minute.
+	 * WordPress cron then starts the scheduled scans of the plugin (the scan
+	 * schedule setting) on time. Every minute, because a scheduled scan works
+	 * for some seconds per request and asks for its next step a minute later
+	 * (File_Monitor::tick_and_chain()), and wp-cron.php only runs what is due.
+	 * No file of the plugin is run from a shell.
+	 *
+	 * @param bool|null $with_cli True: the WP-CLI jobs. False: the wp-cron.php job. Null: has_wp_cli().
+	 * @return array[] Each { id, schedule, when, command, line, url, note }; url is set when the
+	 *                 job only requests an address (panels with a "fetch a URL" task type);
+	 *                 note is one more sentence about the schedule ('' for most jobs).
 	 */
-	public static function cron_jobs() {
-		$php    = self::php_command();
-		$script = wp_normalize_path( WPCYBERSEC_DIR ) . 'bin/cron.php';
-		$cron   = self::shell_arg( $script );
-		$args   = ' --quiet --wp=' . self::shell_arg( self::abspath() ) . self::cron_url_arg();
-
-		if ( is_multisite() ) {
-			// "php wp-cron.php" cannot tell which site of a network to load (no
-			// host name on the command line): request the main site's
-			// wp-cron.php over HTTP, where every plugin event lives.
-			$wp_cron = 'curl -s -o /dev/null --max-time 120 ' . self::shell_arg( network_site_url( 'wp-cron.php?doing_wp_cron' ) );
+	public static function cron_jobs( $with_cli = null ) {
+		$with_cli = null === $with_cli ? self::has_wp_cli() : (bool) $with_cli;
+		if ( ! $with_cli ) {
+			$url  = self::wp_cron_url();
+			$jobs = array(
+				array(
+					'id'       => 'wp_cron',
+					'schedule' => '* * * * *',
+					'when'     => is_multisite()
+						? __( 'WordPress cron of the main site, every minute (it starts the scheduled scans)', 'qartvelo-guard' )
+						: __( 'WordPress cron, every minute (it starts the scheduled scans)', 'qartvelo-guard' ),
+					'command'  => 'curl -s -o /dev/null --max-time 120 ' . self::shell_arg( $url ),
+					'url'      => $url,
+					'note'     => self::cron_slow_host_note(),
+				),
+			);
 		} else {
-			$wp_cron = $php . ' ' . self::shell_arg( self::abspath() . '/wp-cron.php' ) . ' > /dev/null 2>&1';
+			// The site's own PHP when the default php is another version, and the
+			// full path to wp when it is known (wp_cli_cron()).
+			$cli  = self::wp_cli_cron();
+			$path = self::shell_arg( self::abspath() );
+			$wp   = $path . self::cron_url_arg();
+			$jobs = array(
+				array(
+					'id'       => 'quick',
+					'schedule' => '17 * * * *',
+					'when'     => __( 'Quick scan, every hour (at minute 17)', 'qartvelo-guard' ),
+					'command'  => "{$cli} wpcybersec scan --path={$wp} --quiet",
+					'url'      => '',
+				),
+				array(
+					'id'       => 'full',
+					'schedule' => '30 3 * * *',
+					'when'     => __( 'Full malware scan, every night (at 3:30)', 'qartvelo-guard' ),
+					'command'  => "{$cli} wpcybersec scan --full --path={$wp} --quiet",
+					'url'      => '',
+				),
+				array(
+					'id'       => 'wp_cron',
+					'schedule' => '*/5 * * * *',
+					'when'     => is_multisite()
+						? __( 'WordPress cron of every site of the network, every 5 minutes', 'qartvelo-guard' )
+						: __( 'The rest of WordPress cron, every 5 minutes', 'qartvelo-guard' ),
+					'command'  => is_multisite()
+						? "{$cli} site list --field=url --path={$path} | xargs -I{} {$cli} cron event run --due-now --url={} --path={$path} --quiet"
+						: "{$cli} cron event run --due-now --path={$wp} --quiet",
+					'url'      => '',
+				),
+			);
 		}
-		$jobs = array(
-			array(
-				'id'       => 'quick',
-				'schedule' => '17 * * * *',
-				'when'     => __( 'Quick scan, every hour (at minute 17)', 'qartvelo-guard' ),
-				'command'  => $php . ' ' . $cron . $args . ' > /dev/null',
-				'script'   => $script,
-				'args'     => ltrim( $args ),
-				'url'      => '',
-			),
-			array(
-				'id'       => 'full',
-				'schedule' => '30 3 * * *',
-				'when'     => __( 'Full malware scan, every night (at 3:30)', 'qartvelo-guard' ),
-				'command'  => $php . ' ' . $cron . ' --full' . $args . ' > /dev/null',
-				'script'   => $script,
-				'args'     => '--full' . $args,
-				'url'      => '',
-			),
-			array(
-				'id'       => 'wp_cron',
-				'schedule' => '*/5 * * * *',
-				'when'     => is_multisite()
-					? __( 'WordPress cron of the main site, every 5 minutes', 'qartvelo-guard' )
-					: __( 'The rest of WordPress cron, every 5 minutes', 'qartvelo-guard' ),
-				'command'  => $wp_cron,
-				'script'   => self::abspath() . '/wp-cron.php',
-				'args'     => '',
-				'url'      => is_multisite() ? network_site_url( 'wp-cron.php?doing_wp_cron' ) : '',
-			),
-		);
 		foreach ( $jobs as $i => $job ) {
 			$jobs[ $i ]['line'] = $job['schedule'] . ' ' . $job['command'];
+			$jobs[ $i ]['note'] = isset( $job['note'] ) ? $job['note'] : '';
 		}
 		return $jobs;
 	}
 
 	/**
-	 * The crontab block of cron_jobs().
+	 * Step text of one job of cron_jobs() for a hosting panel: what it does,
+	 * its schedule and, for the wp-cron.php job, the sentence about hosts that
+	 * do not allow every minute. The command follows as the code of the step.
+	 *
+	 * @param array $job One entry of cron_jobs().
+	 * @return string
+	 */
+	public static function cron_job_text( array $job ) {
+		if ( ! empty( $job['note'] ) ) {
+			/* translators: 1: what the job does and when, 2: cron schedule, 3: one more sentence about the schedule */
+			return sprintf( __( '%1$s. Schedule: %2$s. %3$s Command:', 'qartvelo-guard' ), $job['when'], $job['schedule'], $job['note'] );
+		}
+		/* translators: 1: what the job does and when, 2: cron schedule */
+		return sprintf( __( '%1$s. Schedule: %2$s. Command:', 'qartvelo-guard' ), $job['when'], $job['schedule'] );
+	}
+
+	/**
+	 * One sentence for the wp-cron.php job, whose schedule is every minute:
+	 * what happens on a host whose panel does not allow that.
 	 *
 	 * @return string
 	 */
-	public static function cron_crontab() {
-		$jobs = self::cron_jobs();
+	public static function cron_slow_host_note() {
+		return __( 'Hosts that allow only every 5 or 15 minutes still work: scheduled scans then take longer to finish.', 'qartvelo-guard' );
+	}
+
+	/**
+	 * The crontab block of cron_jobs().
+	 *
+	 * @param bool|null $with_cli See cron_jobs().
+	 * @return string
+	 */
+	public static function cron_crontab( $with_cli = null ) {
+		$jobs = self::cron_jobs( $with_cli );
+		if ( 1 === count( $jobs ) ) {
+			return "# Qartvelo Guard: WordPress cron every minute, it starts the scheduled scans.\n" . $jobs[0]['line'];
+		}
 		return "# Qartvelo Guard: quick scan every hour, full malware scan every night.\n"
 			. $jobs[0]['line'] . "\n"
 			. $jobs[1]['line'] . "\n"
-			. ( is_multisite() ? "# WordPress cron of the main site every 5 minutes.\n" : "# The rest of WordPress cron every 5 minutes.\n" )
+			. ( is_multisite() ? "# WordPress cron of every site of the network every 5 minutes.\n" : "# The rest of WordPress cron every 5 minutes.\n" )
 			. $jobs[2]['line'];
 	}
 
 	/**
 	 * The last step everywhere: switching off WP-Cron on page visits once the
-	 * jobs run (the one-click button appears after the first real cron run).
+	 * jobs run (the one-click button appears once real cron is seen running:
+	 * a WP-CLI run from the crontab, or three requests for wp-cron.php in the
+	 * rhythm of a cron job, see record_wp_cron_request()).
 	 *
 	 * @return array { text, code }
 	 */
 	public static function cron_disable_step() {
-		$text = __( 'Once the jobs have run (the plugin notices the first run within an hour), switch off WP-Cron on page visits: use the "Switch off visitor-triggered cron" button that then appears in Settings > Advanced > Real cron, or add this line to wp-config.php above "That\'s all, stop editing!":', 'qartvelo-guard' );
+		$text = __( 'Once the jobs run (the plugin notices that within an hour), switch off WP-Cron on page visits: use the "Switch off visitor-triggered cron" button that then appears in Settings > Advanced > Real cron, or add this line to wp-config.php above "That\'s all, stop editing!":', 'qartvelo-guard' );
 		if ( is_multisite() ) {
 			$text = __( 'On a multisite network the other sites keep their own WP-Cron, so switch it off only when the WP-CLI variant runs cron for every site. Then use the "Switch off visitor-triggered cron" button in Settings > Advanced > Real cron, or add this line to wp-config.php:', 'qartvelo-guard' );
 		}
@@ -2558,48 +2663,161 @@ class Sysadmin_Tools {
 		);
 	}
 
+	/** Days after the update that removed bin/cron.php during which cron_removed_note() is shown. */
+	const CRON_NOTE_DAYS = 30;
+
 	/**
-	 * Real cron snippets with absolute paths (the first is cron_crontab()).
+	 * Network option set once by Installer::record_version() when a site that
+	 * used real cron is updated from a version before 1.2.0: the time of that
+	 * update. Read only by cron_removed_note() (the screens that show the note),
+	 * so it is not autoloaded.
+	 */
+	const CRON_NOTE_OPTION = 'wpcybersec_cron_note';
+
+	/**
+	 * Network option { last, n }: time of the last counted request for
+	 * "wp-cron.php?doing_wp_cron" and how many came in a row in the rhythm of a
+	 * cron job. Read and written on those requests only, so it is not autoloaded.
+	 */
+	const CRON_SEEN_OPTION = 'wpcybersec_wp_cron_seen';
+
+	/** Requests in a row, each CRON_RHYTHM_MIN to CRON_RHYTHM_MAX seconds after the one before, that prove a cron job. */
+	const CRON_RHYTHM_RUNS = 3;
+
+	/** Shortest gap that counts: a crontab cannot run more often than once a minute. */
+	const CRON_RHYTHM_MIN = 50;
+
+	/** Longest gap that counts: a job every 15 minutes, plus a minute for a slow start. */
+	const CRON_RHYTHM_MAX = 960;
+
+	/**
+	 * Records a real cron run that came through wp-cron.php (the job without
+	 * WP-CLI), in the same network option the WP-CLI runs use
+	 * (Cli::record_cron_run()). Only a web request for
+	 * "wp-cron.php?doing_wp_cron" is looked at: WordPress itself starts cron
+	 * with a value in that key, so an empty one is a job on the server or at an
+	 * external cron service.
+	 *
+	 * Anybody can send one such request, so one request proves nothing: only
+	 * the rhythm of a cron job does. CRON_RHYTHM_RUNS requests, each
+	 * CRON_RHYTHM_MIN to CRON_RHYTHM_MAX seconds after the one before, count as
+	 * real cron; a longer gap starts the count again and a request that comes
+	 * sooner is ignored. From then on wpcybersec_cli_cron_at is written at most
+	 * once in four minutes.
+	 */
+	public static function record_wp_cron_request() {
+		if ( ! wp_doing_cron() || ( defined( 'WP_CLI' ) && WP_CLI ) || 'cli' === PHP_SAPI || ! Network::is_main() ) {
+			return;
+		}
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- a cron job cannot send a nonce; only the presence of an empty key is read.
+		if ( ! isset( $_GET['doing_wp_cron'] ) || '' !== $_GET['doing_wp_cron'] ) {
+			return;
+		}
+		$now  = time();
+		$seen = Network::get_option( self::CRON_SEEN_OPTION, array() );
+		$last = is_array( $seen ) && isset( $seen['last'] ) ? (int) $seen['last'] : 0;
+		$runs = is_array( $seen ) && isset( $seen['n'] ) ? (int) $seen['n'] : 0;
+		$gap  = $now - $last;
+		if ( $last > 0 && $gap >= 0 && $gap < self::CRON_RHYTHM_MIN ) {
+			return; // Too soon after the last one: not counted, and the count is not started again either.
+		}
+		$kept = $last > 0 && $runs > 0 && $gap >= 0 && $gap <= self::CRON_RHYTHM_MAX;
+		if ( $kept && $runs >= self::CRON_RHYTHM_RUNS && $gap < 4 * MINUTE_IN_SECONDS ) {
+			return; // Rhythm already proven and still kept: one write in four minutes is enough for a job that runs every minute.
+		}
+		$runs = $kept ? min( self::CRON_RHYTHM_RUNS, $runs + 1 ) : 1;
+		Network::update_option(
+			self::CRON_SEEN_OPTION,
+			array(
+				'last' => $now,
+				'n'    => $runs,
+			),
+			false
+		);
+		if ( $runs >= self::CRON_RHYTHM_RUNS && (int) Network::get_option( 'wpcybersec_cli_cron_at', 0 ) < $now - 4 * MINUTE_IN_SECONDS ) {
+			Network::update_option( 'wpcybersec_cli_cron_at', $now, false );
+		}
+	}
+
+	/**
+	 * One sentence for the screens that offer the cron lines, after the update
+	 * that removed bin/cron.php on a site that used real cron: versions before
+	 * 1.2.0 printed crontab lines that started that file, and those lines do
+	 * nothing now. Shown while CRON_NOTE_OPTION exists and is younger than
+	 * CRON_NOTE_DAYS. The option is removed by a scan the new WP-CLI lines
+	 * start (Cli::scan()) and by the "Done, hide this" link next to the note
+	 * (clear_cron_removed_note()). A fresh install never has it, whatever its
+	 * cron does.
+	 *
+	 * @return string '' when there is nothing to say.
+	 */
+	public static function cron_removed_note() {
+		$since = (int) Network::get_option( self::CRON_NOTE_OPTION, 0 );
+		if ( $since <= 0 || $since < time() - self::CRON_NOTE_DAYS * DAY_IN_SECONDS ) {
+			return '';
+		}
+		return __( 'Version 1.2.0 removed bin/cron.php. If the crontab of this server still has lines that start it, they do nothing now: replace them with the lines shown here.', 'qartvelo-guard' );
+	}
+
+	/**
+	 * Forgets the note of cron_removed_note() for the whole site (network).
+	 */
+	public static function clear_cron_removed_note() {
+		if ( false !== Network::get_option( self::CRON_NOTE_OPTION, false ) ) {
+			Network::delete_option( self::CRON_NOTE_OPTION );
+		}
+	}
+
+	/**
+	 * Real cron snippets with absolute paths: the WP-CLI lines and the line
+	 * without WP-CLI (the one that fits this server first), then the
+	 * wp-config.php line.
 	 *
 	 * @return array[] Each { id, label, file, code, help }.
 	 */
 	public function cron_snippets() {
-		$jobs = self::cron_jobs();
-		$wp   = self::shell_arg( self::abspath() ) . self::cron_url_arg();
-		$path = self::shell_arg( self::abspath() );
-		$off  = self::cron_disable_step();
+		$off = self::cron_disable_step();
 
-		// The site's own PHP when the default php is another version (wp_cli()).
-		$cli        = self::wp_cli();
-		$wpcli_cron = is_multisite()
-			? "*/5 * * * * {$cli} site list --field=url --path={$path} | xargs -I{} {$cli} cron event run --due-now --url={} --path={$path} --quiet"
-			: "*/5 * * * * {$cli} cron event run --due-now --path={$wp} --quiet";
-		$cli_help   = 'wp' !== $cli
+		$cli_help = 'wp' !== self::wp_cli()
 			/* translators: %s: PHP binary */
 			? ' ' . sprintf( __( 'The lines start WP-CLI with this site\'s PHP (%s) because the server\'s default php is another one; a plain "wp" could stop with a fatal error from a plugin that needs this PHP version.', 'qartvelo-guard' ), self::php_binary() )
 			: '';
+		// Cron's PATH is /usr/bin:/bin: the lines name wp by its full path when the
+		// plugin found it (wp_cli_cron()); the advice is only for a path it does not know.
+		$wp_known = '' !== self::wp_cli_path();
+		if ( is_multisite() ) {
+			$wpcli_help = $wp_known
+				? __( 'Add these lines to the crontab of the user that owns the site files (often www-data). Only one scan runs at a time, so overlapping runs are harmless. The last line runs the due WordPress cron events of every site of the network.', 'qartvelo-guard' )
+				: __( 'Add these lines to the crontab of the user that owns the site files (often www-data). Use the full path to wp if cron cannot find it. Only one scan runs at a time, so overlapping runs are harmless. The last line runs the due WordPress cron events of every site of the network.', 'qartvelo-guard' );
+		} else {
+			$wpcli_help = $wp_known
+				? __( 'Add these lines to the crontab of the user that owns the site files (often www-data). Only one scan runs at a time, so overlapping runs are harmless.', 'qartvelo-guard' )
+				: __( 'Add these lines to the crontab of the user that owns the site files (often www-data). Use the full path to wp if cron cannot find it. Only one scan runs at a time, so overlapping runs are harmless.', 'qartvelo-guard' );
+		}
+		$wpcli    = array(
+			'id'    => 'wpcli',
+			'label' => __( 'System cron with WP-CLI', 'qartvelo-guard' ),
+			'file'  => __( 'crontab -e (as the web server user)', 'qartvelo-guard' ),
+			'code'  => self::cron_crontab( true ),
+			'help'  => $wpcli_help . $cli_help,
+		);
+		$wp_cron  = array(
+			'id'    => 'wpcron',
+			'label' => __( 'System cron without WP-CLI', 'qartvelo-guard' ),
+			'file'  => __( 'crontab -e (as the web server user)', 'qartvelo-guard' ),
+			'code'  => self::cron_crontab( false ),
+			'help'  => ( is_multisite()
+				? __( 'This line requests wp-cron.php of the main site every minute. WordPress cron then starts the scheduled scans on time (the "Scheduled scans" setting says how often). The other sites of the network keep their own WP-Cron, so do not switch WP-Cron off unless the WP-CLI lines run it for every site.', 'qartvelo-guard' )
+				: __( 'This line requests wp-cron.php every minute. WordPress cron then starts the scheduled scans on time (the "Scheduled scans" setting says how often).', 'qartvelo-guard' ) ) . ' ' . self::cron_slow_host_note(),
+		);
+		$first    = self::has_wp_cli() ? $wpcli : $wp_cron;
+		$second   = self::has_wp_cli() ? $wp_cron : $wpcli;
+		/* translators: %s: name of a cron variant */
+		$first['label'] = sprintf( __( '%s (recommended)', 'qartvelo-guard' ), $first['label'] );
 
 		return array(
-			array(
-				'id'    => 'crontab',
-				'label' => __( 'System cron with PHP (recommended)', 'qartvelo-guard' ),
-				'file'  => __( 'crontab -e (as the web server user)', 'qartvelo-guard' ),
-				'code'  => self::cron_crontab(),
-				'help'  => is_multisite()
-					? __( 'Add these lines to the crontab of the user that owns the site files (often www-data). Only one scan runs at a time, so overlapping runs are harmless. On a multisite network the plugin runs on the main site only; the other sites keep their own WP-Cron, so do not switch WP-Cron off unless the WP-CLI variant below runs it for every site.', 'qartvelo-guard' )
-					: __( 'Add these lines to the crontab of the user that owns the site files (often www-data). Only one scan runs at a time, so overlapping runs are harmless.', 'qartvelo-guard' ),
-			),
-			array(
-				'id'    => 'wpcli',
-				'label' => __( 'The same with WP-CLI', 'qartvelo-guard' ),
-				'file'  => __( 'crontab -e (as the web server user)', 'qartvelo-guard' ),
-				'code'  => $jobs[0]['schedule'] . " {$cli} wpcybersec scan --path={$wp} --quiet\n"
-					. $jobs[1]['schedule'] . " {$cli} wpcybersec scan --full --path={$wp} --quiet\n"
-					. $wpcli_cron,
-				'help'  => ( is_multisite()
-					? __( 'Use this variant instead when WP-CLI is installed. Use the full path to wp if cron cannot find it. The last line runs the due WordPress cron events of every site of the network.', 'qartvelo-guard' )
-					: __( 'Use this variant instead when WP-CLI is installed. Use the full path to wp if cron cannot find it.', 'qartvelo-guard' ) ) . $cli_help,
-			),
+			$first,
+			$second,
 			array(
 				'id'    => 'wpconfig',
 				'label' => __( 'Switch off WP-Cron on page visits', 'qartvelo-guard' ),
@@ -2632,8 +2850,7 @@ class Sysadmin_Tools {
 	 * @return string
 	 */
 	public static function nginx_uploads_rule() {
-		$path = self::url_path_for( self::uploads_dir() );
-		$path = '' !== $path ? $path : '/wp-content/uploads/';
+		$path = self::uploads_url_path();
 		return 'location ~* ^' . str_replace( '\\-', '-', preg_quote( $path, '#' ) ) . '.*\\.(' . self::UPLOADS_EXEC_PATTERN . ')$ {' . "\n    deny all;\n}";
 	}
 
@@ -2648,19 +2865,45 @@ class Sysadmin_Tools {
 	 * @return string
 	 */
 	public static function nginx_uploads_block() {
-		$path = self::url_path_for( self::uploads_dir() );
-		$path = '' !== $path ? $path : '/wp-content/uploads/';
+		$path = self::uploads_url_path();
 		return 'location ^~ ' . $path . " {\n    location ~* \\.(" . self::UPLOADS_EXEC_PATTERN . ")$ {\n        deny all;\n    }\n}";
 	}
 
 	/**
-	 * URL path of the uploads folder ("/wp-content/uploads/").
+	 * URL path of the uploads folder ("/wp-content/uploads/" on most sites),
+	 * the one source for the server rules. From the folder wp_upload_dir()
+	 * names (where this server serves it); when that folder is outside
+	 * wp-content and the WordPress folder, from the address wp_upload_dir()
+	 * gives for it. The usual path is only the last resort for a site whose
+	 * wp_upload_dir() returns neither.
 	 *
-	 * @return string
+	 * @return string With a slash at both ends.
 	 */
 	public static function uploads_url_path() {
 		$path = self::url_path_for( self::uploads_dir() );
-		return '' !== $path ? $path : '/wp-content/uploads/';
+		if ( '' !== $path ) {
+			return $path;
+		}
+		$uploads = Network::on_main(
+			static function () {
+				return wp_upload_dir( null, false );
+			}
+		);
+		$path = empty( $uploads['baseurl'] ) ? '' : trim( (string) wp_parse_url( (string) $uploads['baseurl'], PHP_URL_PATH ), '/' );
+		return '' !== $path ? '/' . $path . '/' : '/wp-content/uploads/';
+	}
+
+	/**
+	 * The .htaccess file of the uploads folder as named next to its rules:
+	 * relative to the scanned folder when it is inside it
+	 * ("wp-content/uploads/.htaccess" on most sites), else the full path.
+	 *
+	 * @return string
+	 */
+	public static function uploads_htaccess_label() {
+		$dir = self::uploads_dir();
+		// The usual place only when wp_upload_dir() cannot name the folder.
+		return '' !== $dir ? Paths::rel( $dir . '/.htaccess' ) : 'wp-content/uploads/.htaccess';
 	}
 
 	/**
@@ -2741,6 +2984,18 @@ class Sysadmin_Tools {
 		$lines[] = '# chown -R deploy:www-data .';
 		$lines[] = '# chown -R www-data:www-data ' . $uploads . ' ' . $data;
 		return implode( "\n", $lines );
+	}
+
+	/**
+	 * The fapolicyd trust list as the download sends it: every line of
+	 * fapolicyd_trust_export() followed by a newline.
+	 *
+	 * @return \Generator Lines with their newline.
+	 */
+	public function fapolicyd_trust_lines() {
+		foreach ( $this->fapolicyd_trust_export() as $line ) {
+			yield $line . "\n";
+		}
 	}
 
 	/**
@@ -2839,7 +3094,7 @@ class Sysadmin_Tools {
 		$lines = array(
 			'#!/usr/bin/env bash',
 			'# Qartvelo Guard: runs a scan 20 seconds after files stop changing.',
-			'# Needs inotify-tools (apt install inotify-tools / dnf install inotify-tools).',
+			'# Needs WP-CLI (wp) and inotify-tools (apt install inotify-tools / dnf install inotify-tools).',
 			'# Run it as the web server user, for example from a systemd service:',
 			'#   [Service]',
 			'#   User=www-data',
@@ -2847,10 +3102,7 @@ class Sysadmin_Tools {
 			'#   Restart=always',
 			'',
 			'SITE=' . self::shell_arg( $root ),
-			'PHP=' . self::shell_arg( self::php_binary() ),
-			'PHPARGS=' . ( preg_match( '/^php-?cgi/i', basename( self::php_binary() ) ) ? '-q' : '' ),
 			'URLARG=' . ( is_multisite() ? self::shell_arg( '--url=' . network_home_url( '/' ) ) : '' ),
-			'CRON=' . self::shell_arg( wp_normalize_path( WPCYBERSEC_DIR ) . 'bin/cron.php' ),
 			'WP=' . self::shell_arg( self::abspath() ),
 			'DEBOUNCE=20',
 			'EXCLUDE=' . self::shell_arg( '(' . implode( '|', $exclude ) . ')' ),
@@ -2866,7 +3118,7 @@ class Sysadmin_Tools {
 			'    [ "$rc" -le 128 ] && exit 1',
 			'    if [ "${pending:-0}" = 1 ]; then',
 			'        pending=0',
-			'        "$PHP" $PHPARGS "$CRON" --wp="$WP" $URLARG > /dev/null 2>&1',
+			'        ' . self::wp_cli_cron() . ' wpcybersec scan --path="$WP" $URLARG --quiet > /dev/null 2>&1',
 			'    fi',
 			'done',
 		);
@@ -2961,7 +3213,7 @@ class Sysadmin_Tools {
 			return '';
 		}
 		$code = str_replace( "\r\n", "\n", $code );
-		$site = untrailingslashit( wp_normalize_path( ABSPATH ) );
+		$site = self::abspath();
 		// Inside double quotes only \ " $ and ` are special.
 		$line = 'SITE="${SITE:-' . addcslashes( $site, '\\"$`' ) . '}"';
 		$pos  = strpos( $code, "\n" );
@@ -2983,7 +3235,7 @@ class Sysadmin_Tools {
 		}
 		// One cgav serves every site of the server: self-install adds this site to
 		// its SITES list, and add-site puts it in the maldet monitor (restarting it).
-		$site = self::shell_arg( untrailingslashit( wp_normalize_path( ABSPATH ) ) );
+		$site = self::shell_arg( self::abspath() );
 		return "cat > /root/cgav.sh <<'CGAV_EOF'\n" . rtrim( $script, "\n" ) . "\nCGAV_EOF\n"
 			. 'bash /root/cgav.sh self-install ' . $site . "\n"
 			. 'cgav add-site ' . $site;
@@ -3025,7 +3277,7 @@ class Sysadmin_Tools {
 		header( 'Content-Type: text/x-shellscript; charset=utf-8' );
 		header( 'Content-Disposition: attachment; filename="cgav.sh"' );
 		header( 'X-Content-Type-Options: nosniff' );
-		echo $script; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- shell script download.
+		self::send_file_body( $script );
 		exit;
 	}
 
@@ -3090,7 +3342,7 @@ class Sysadmin_Tools {
 		$av     = $this->antivirus_status();
 		$rows   = array();
 		$base   = '/usr/local/maldetect';
-		$site   = untrailingslashit( wp_normalize_path( ABSPATH ) );
+		$site   = self::abspath();
 
 		// ClamAV daemon (the same check the scanner uses).
 		if ( 'missing' === $av['clamav']['state'] && ! empty( $av['clamav']['hidden'] ) ) {
@@ -3351,7 +3603,7 @@ class Sysadmin_Tools {
 	 * @return array { text, code }
 	 */
 	public static function monitor_add_site_step() {
-		$site = self::shell_arg( untrailingslashit( wp_normalize_path( ABSPATH ) ) );
+		$site = self::shell_arg( self::abspath() );
 		$list = '/usr/local/maldetect/monitor_paths';
 		$cgav = 'cgav add-site ' . $site;
 		if ( true === self::cgav_installed() ) {
@@ -4082,7 +4334,7 @@ class Sysadmin_Tools {
 			$warnings[] = sprintf( __( '%s is too close to the top of the file system to scan safely. The previous scan scope was kept.', 'qartvelo-guard' ), '' === $real ? '/' : $real );
 			return null;
 		}
-		if ( ! Storage::is_within( ABSPATH, $real ) ) {
+		if ( ! Storage::is_within( Paths::wp_root(), $real ) ) {
 			$warnings[] = __( 'Note: WordPress itself is outside the custom scan folder, so its files are not checked.', 'qartvelo-guard' );
 		}
 		return $real;
@@ -4267,14 +4519,11 @@ class Sysadmin_Tools {
 			header( 'Content-Type: application/json; charset=utf-8' );
 			header( 'Content-Disposition: attachment; filename="qartvelo-guard-settings-' . $host . '-' . gmdate( 'Ymd' ) . '.json"' );
 			header( 'X-Content-Type-Options: nosniff' );
-			echo wp_json_encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- JSON download.
+			echo wp_json_encode( $data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
 			exit;
 		}
 
 		if ( 'fapolicyd' === $type ) {
-			if ( function_exists( 'set_time_limit' ) ) {
-				@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors, Squiz.PHP.DiscouragedFunctions.Discouraged -- building the fapolicyd trust list hashes every file of the site.
-			}
 			self::log( 'fapolicyd_exported', __( 'fapolicyd trust list downloaded.', 'qartvelo-guard' ) );
 			nocache_headers();
 			header( 'Content-Type: text/plain; charset=utf-8' );
@@ -4283,9 +4532,7 @@ class Sysadmin_Tools {
 			while ( ob_get_level() > 0 ) {
 				ob_end_flush();
 			}
-			foreach ( $this->fapolicyd_trust_export() as $line ) {
-				echo $line . "\n"; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- plain text download.
-			}
+			self::send_file_body( $this->fapolicyd_trust_lines() );
 			exit;
 		}
 

@@ -64,29 +64,16 @@ class Db_Scanner {
 	const POST_STATUSES = array( 'publish', 'draft', 'private', 'pending', 'future' );
 
 	/**
-	 * Hosts whose scripts are fixed embed code of a large provider (an attacker
-	 * cannot publish code there), so an embed in a post or widget is not
-	 * reported. Filter: wpcybersec_db_trusted_script_hosts.
+	 * Data file (inside the plugin folder) with the host names the scan
+	 * compares values with; nothing is ever loaded from them:
+	 *   script_hosts        hosts whose scripts are fixed embed code of a large
+	 *                       provider (an attacker cannot publish code there), so
+	 *                       an embed in a post or widget is not reported.
+	 *                       Filter: wpcybersec_db_trusted_script_hosts.
+	 *   tag_manager_frames  host and path of a tag manager's noscript frame.
+	 * Read once per request by host_data().
 	 */
-	const TRUSTED_SCRIPT_HOSTS = array(
-		'platform.twitter.com',
-		'www.instagram.com',
-		'instagram.com',
-		'www.tiktok.com',
-		'connect.facebook.net',
-		'assets.pinterest.com',
-		'embed.reddit.com',
-		'embed.redditmedia.com',
-		's.imgur.com', // phpcs:ignore PluginCheck.CodeAnalysis.Offloading.OffloadedContent -- a host name in an allowlist; nothing is loaded from it.
-		'embedr.flickr.com',
-		'player.vimeo.com',
-		'www.youtube.com',
-		'www.google.com',
-		'www.gstatic.com', // phpcs:ignore PluginCheck.CodeAnalysis.Offloading.OffloadedContent -- a host name in an allowlist; nothing is loaded from it.
-		'apis.google.com',
-		'js.stripe.com',
-		'www.paypal.com',
-	);
+	const HOSTS_FILE = 'includes/data/trusted-script-hosts.json';
 
 	/**
 	 * Options of header / footer code plugins (option name => plugin). Code
@@ -141,6 +128,9 @@ class Db_Scanner {
 
 	/** @var string[]|null Trusted script hosts after the filter. */
 	private $trusted_hosts = null;
+
+	/** @var array|null Lists of HOSTS_FILE, read once per request (see host_data()). */
+	private static $host_data = null;
 
 	/** @var int|null Rows per query for this request (see rows_limit()). */
 	private $rows_limit = null;
@@ -226,8 +216,8 @@ class Db_Scanner {
 		$cursor['blog']           = (int) $blog_id;
 		$cursor['stage']          = 'options';
 		$cursor['last']           = 0;
-		$cursor['max']            = (int) $wpdb->get_var( "SELECT MAX(option_id) FROM {$wpdb->options}" ); // phpcs:ignore WordPress.DB
-		$cursor['options_total'] += (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->options}" ); // phpcs:ignore WordPress.DB
+		$cursor['max']            = (int) $wpdb->get_var( "SELECT MAX(option_id) FROM {$wpdb->options}" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the scan reads raw rows in id ranges; no WordPress API does that.
+		$cursor['options_total'] += (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->options}" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the scan reads raw rows in id ranges; no WordPress API does that.
 		++$cursor['sites'];
 	}
 
@@ -399,39 +389,40 @@ class Db_Scanner {
 		$from = (int) $cursor['last'];
 		$to   = $from + self::OPTIONS_RANGE;
 
-		$params = array(
-			self::MAX_VALUE,
-			$from,
-			$to,
-			$wpdb->esc_like( '_transient_' ) . '%',
-			$wpdb->esc_like( '_site_transient_' ) . '%',
-			$wpdb->esc_like( 'wpcybersec_' ) . '%',
-			'%eval%',
-			'%assert%',
-			'%document.write%',
-			'ihaf_insert_header',
-			'ihaf_insert_body',
-			'ihaf_insert_footer',
-			'hefo',
-			$wpdb->esc_like( 'widget_' ) . '%',
-			$wpdb->esc_like( 'theme_mods_' ) . '%',
-			'%' . $wpdb->esc_like( 'custom_html' ) . '%',
-			'%<script%',
-			'%u003cscript%',
-			'%<iframe%',
-			'%u003ciframe%',
-			$this->rows_limit(),
+		// One fixed statement on a core table; every value is a placeholder.
+		$rows = (array) $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the scan reads raw rows in id ranges; no WordPress API does that.
+			$wpdb->prepare(
+				"SELECT option_id, option_name, LENGTH(option_value) AS len, SUBSTRING(option_value, 1, %d) AS val FROM {$wpdb->options}"
+				. ' WHERE option_id > %d AND option_id <= %d AND option_name NOT LIKE %s AND option_name NOT LIKE %s AND option_name NOT LIKE %s'
+				. ' AND ( LOWER(option_value) LIKE %s OR LOWER(option_value) LIKE %s OR LOWER(option_value) LIKE %s'
+				. ' OR option_name IN (%s, %s, %s, %s)'
+				. ' OR ( ( option_name LIKE %s OR option_name LIKE %s OR option_name LIKE %s )'
+				. ' AND ( LOWER(option_value) LIKE %s OR LOWER(option_value) LIKE %s OR LOWER(option_value) LIKE %s OR LOWER(option_value) LIKE %s ) ) )'
+				. ' ORDER BY option_id LIMIT %d',
+				self::MAX_VALUE,
+				$from,
+				$to,
+				$wpdb->esc_like( '_transient_' ) . '%',
+				$wpdb->esc_like( '_site_transient_' ) . '%',
+				$wpdb->esc_like( 'wpcybersec_' ) . '%',
+				'%eval%',
+				'%assert%',
+				'%document.write%',
+				'ihaf_insert_header',
+				'ihaf_insert_body',
+				'ihaf_insert_footer',
+				'hefo',
+				$wpdb->esc_like( 'widget_' ) . '%',
+				$wpdb->esc_like( 'theme_mods_' ) . '%',
+				'%' . $wpdb->esc_like( 'custom_html' ) . '%',
+				'%<script%',
+				'%u003cscript%',
+				'%<iframe%',
+				'%u003ciframe%',
+				$this->rows_limit()
+			),
+			ARRAY_A
 		);
-		// phpcs:disable WordPress.DB, PluginCheck.Security.DirectDB.UnescapedDBParameter -- core table from $wpdb, every value is a placeholder.
-		$sql  = "SELECT option_id, option_name, LENGTH(option_value) AS len, SUBSTRING(option_value, 1, %d) AS val FROM {$wpdb->options}"
-			. ' WHERE option_id > %d AND option_id <= %d AND option_name NOT LIKE %s AND option_name NOT LIKE %s AND option_name NOT LIKE %s'
-			. ' AND ( LOWER(option_value) LIKE %s OR LOWER(option_value) LIKE %s OR LOWER(option_value) LIKE %s'
-			. ' OR option_name IN (%s, %s, %s, %s)'
-			. ' OR ( ( option_name LIKE %s OR option_name LIKE %s OR option_name LIKE %s )'
-			. ' AND ( LOWER(option_value) LIKE %s OR LOWER(option_value) LIKE %s OR LOWER(option_value) LIKE %s OR LOWER(option_value) LIKE %s ) ) )'
-			. ' ORDER BY option_id LIMIT %d';
-		$rows = (array) $wpdb->get_results( $wpdb->prepare( $sql, $params ), ARRAY_A );
-		// phpcs:enable
 
 		foreach ( $rows as $row ) {
 			++$cursor['options'];
@@ -464,7 +455,7 @@ class Db_Scanner {
 		if ( $to >= (int) $cursor['max'] ) {
 			$cursor['stage']       = 'posts';
 			$cursor['last']        = 0;
-			$cursor['max']         = (int) $wpdb->get_var( "SELECT MAX(ID) FROM {$wpdb->posts}" ); // phpcs:ignore WordPress.DB
+			$cursor['max']         = (int) $wpdb->get_var( "SELECT MAX(ID) FROM {$wpdb->posts}" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the scan reads raw rows in id ranges; no WordPress API does that.
 			$cursor['posts_total'] += $this->count_posts();
 		}
 	}
@@ -481,22 +472,27 @@ class Db_Scanner {
 
 		$types    = self::SKIP_POST_TYPES;
 		$statuses = self::POST_STATUSES;
+		$code     = array_keys( self::CODE_POST_TYPES );
 		$params   = array_merge(
 			array( self::MAX_VALUE, $from, $to ),
 			$types,
 			$statuses,
-			array_keys( self::CODE_POST_TYPES ),
+			$code,
 			array( '%<script%', '%<iframe%', '%eval%', '%document.write%', $this->rows_limit() )
 		);
-		// phpcs:disable WordPress.DB, PluginCheck.Security.DirectDB.UnescapedDBParameter -- core table from $wpdb; the IN lists are placeholders from array_fill().
-		$sql  = "SELECT ID, post_type, post_status, post_title, LENGTH(post_content) AS len, SUBSTRING(post_content, 1, %d) AS val FROM {$wpdb->posts}"
-			. ' WHERE ID > %d AND ID <= %d'
-			. ' AND post_type NOT IN (' . implode( ',', array_fill( 0, count( $types ), '%s' ) ) . ')'
-			. ' AND post_status IN (' . implode( ',', array_fill( 0, count( $statuses ), '%s' ) ) . ')'
-			. ' AND ( post_type IN (' . implode( ',', array_fill( 0, count( self::CODE_POST_TYPES ), '%s' ) ) . ') OR LOWER(post_content) LIKE %s OR LOWER(post_content) LIKE %s OR LOWER(post_content) LIKE %s OR LOWER(post_content) LIKE %s )'
-			. ' ORDER BY ID LIMIT %d';
-		$rows = (array) $wpdb->get_results( $wpdb->prepare( $sql, $params ), ARRAY_A );
-		// phpcs:enable
+		// One fixed statement on a core table; the IN lists are placeholders from array_fill().
+		$rows = (array) $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the scan reads raw rows in id ranges; no WordPress API does that.
+			$wpdb->prepare(
+				"SELECT ID, post_type, post_status, post_title, LENGTH(post_content) AS len, SUBSTRING(post_content, 1, %d) AS val FROM {$wpdb->posts}"
+				. ' WHERE ID > %d AND ID <= %d'
+				. ' AND post_type NOT IN (' . implode( ',', array_fill( 0, count( $types ), '%s' ) ) . ')'
+				. ' AND post_status IN (' . implode( ',', array_fill( 0, count( $statuses ), '%s' ) ) . ')'
+				. ' AND ( post_type IN (' . implode( ',', array_fill( 0, count( $code ), '%s' ) ) . ') OR LOWER(post_content) LIKE %s OR LOWER(post_content) LIKE %s OR LOWER(post_content) LIKE %s OR LOWER(post_content) LIKE %s )'
+				. ' ORDER BY ID LIMIT %d',
+				$params
+			),
+			ARRAY_A
+		);
 
 		foreach ( $rows as $row ) {
 			++$cursor['posts'];
@@ -556,11 +552,11 @@ class Db_Scanner {
 				continue; // One table for the whole network: visited with the main site.
 			}
 			$table = self::table_name( $def );
-			$found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) ); // phpcs:ignore WordPress.DB
+			$found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- asks whether the table of a code snippet plugin exists.
 			if ( $found === $table ) {
 				$cursor['stage'] = $stages[ $i ];
 				$cursor['last']  = 0;
-				$cursor['max']   = (int) $wpdb->get_var( 'SELECT MAX(`' . $def['id'] . "`) FROM `{$table}`" ); // phpcs:ignore WordPress.DB, PluginCheck.Security.DirectDB.UnescapedDBParameter -- table and column names come from the CODE_TABLES constant.
+				$cursor['max']   = (int) $wpdb->get_var( $wpdb->prepare( 'SELECT MAX(%i) FROM %i', $def['id'], $table ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- table of a code snippet plugin (CODE_TABLES); its names are identifier placeholders.
 				return;
 			}
 		}
@@ -591,11 +587,8 @@ class Db_Scanner {
 		$table = self::table_name( $def );
 		$from  = (int) $cursor['last'];
 		$to    = $from + self::POSTS_RANGE;
-		// phpcs:disable WordPress.DB, PluginCheck.Security.DirectDB.UnescapedDBParameter -- table and column names come from the CODE_TABLES constant.
-		$sql  = "SELECT `{$def['id']}` AS id, `{$def['name']}` AS name, LENGTH(`{$def['code']}`) AS len, SUBSTRING(`{$def['code']}`, 1, %d) AS val FROM `{$table}`"
-			. " WHERE `{$def['id']}` > %d AND `{$def['id']}` <= %d ORDER BY `{$def['id']}` LIMIT %d";
-		$rows = (array) $wpdb->get_results( $wpdb->prepare( $sql, self::MAX_VALUE, $from, $to, $this->rows_limit() ), ARRAY_A );
-		// phpcs:enable
+		// Table and column names come from the CODE_TABLES constant and are identifier placeholders (%i).
+		$rows = (array) $wpdb->get_results( $wpdb->prepare( 'SELECT %i AS id, %i AS name, LENGTH(%i) AS len, SUBSTRING(%i, 1, %d) AS val FROM %i WHERE %i > %d AND %i <= %d ORDER BY %i LIMIT %d', $def['id'], $def['name'], $def['code'], $def['code'], self::MAX_VALUE, $table, $def['id'], $from, $def['id'], $to, $def['id'], $this->rows_limit() ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- table of a code snippet plugin; the scan reads raw rows in id ranges.
 		foreach ( $rows as $row ) {
 			if ( ! isset( $cursor['code_rows'] ) ) {
 				$cursor['code_rows'] = 0;
@@ -646,8 +639,7 @@ class Db_Scanner {
 		global $wpdb;
 		$types    = self::SKIP_POST_TYPES;
 		$statuses = self::POST_STATUSES;
-		$sql      = "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type NOT IN (" . implode( ',', array_fill( 0, count( $types ), '%s' ) ) . ') AND post_status IN (' . implode( ',', array_fill( 0, count( $statuses ), '%s' ) ) . ')';
-		return (int) $wpdb->get_var( $wpdb->prepare( $sql, array_merge( $types, $statuses ) ) ); // phpcs:ignore WordPress.DB
+		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type NOT IN (" . implode( ',', array_fill( 0, count( $types ), '%s' ) ) . ') AND post_status IN (' . implode( ',', array_fill( 0, count( $statuses ), '%s' ) ) . ')', array_merge( $types, $statuses ) ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the scan reads raw rows in id ranges; no WordPress API does that.
 	}
 
 	/* ------------------------------------------------------------------ */
@@ -752,7 +744,7 @@ class Db_Scanner {
 	private function resolve_unseen( $run ) {
 		global $wpdb;
 		$table = Store::table( 'items' );
-		$rows  = (array) $wpdb->get_results( $wpdb->prepare( "SELECT id, path, details FROM {$table} WHERE type = %s AND status = %s AND source = %s ORDER BY id LIMIT 5000", Store::TYPE_THREAT, Store::STATUS_PENDING, Store::SOURCE_DATABASE ), ARRAY_A ); // phpcs:ignore WordPress.DB, PluginCheck.Security.DirectDB.UnescapedDBParameter -- $table is Store::table(): $wpdb->prefix plus a fixed name.
+		$rows  = (array) $wpdb->get_results( $wpdb->prepare( 'SELECT id, path, details FROM %i WHERE type = %s AND status = %s AND source = %s ORDER BY id LIMIT 5000', $table, Store::TYPE_THREAT, Store::STATUS_PENDING, Store::SOURCE_DATABASE ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- plugin's own table; no WordPress API covers it.
 		$done  = 0;
 		foreach ( $rows as $row ) {
 			$details = json_decode( (string) $row['details'], true );
@@ -1119,17 +1111,50 @@ class Db_Scanner {
 	}
 
 	/**
+	 * The lists of HOSTS_FILE, read when the database scan first needs them
+	 * and kept for the request. A file that is missing, unreadable or not
+	 * valid JSON gives empty lists: the scan then reports every script from
+	 * another site (scripts of the site's own hosts are never reported, see
+	 * external_host()), it never stops.
+	 *
+	 * @return array { script_hosts: string[], tag_manager_frames: string[] } Lowercase.
+	 */
+	private static function host_data() {
+		if ( null !== self::$host_data ) {
+			return self::$host_data;
+		}
+		$data = array(
+			'script_hosts'       => array(),
+			'tag_manager_frames' => array(),
+		);
+		$file = WPCYBERSEC_DIR . self::HOSTS_FILE;
+		$json = is_readable( $file ) ? json_decode( (string) file_get_contents( $file ), true ) : null; // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- a data file of the plugin itself, read from disk.
+		if ( is_array( $json ) ) {
+			foreach ( array_keys( $data ) as $key ) {
+				foreach ( isset( $json[ $key ] ) && is_array( $json[ $key ] ) ? $json[ $key ] : array() as $entry ) {
+					if ( is_string( $entry ) && '' !== trim( $entry ) ) {
+						$data[ $key ][] = strtolower( trim( $entry ) );
+					}
+				}
+			}
+		}
+		self::$host_data = $data;
+		return $data;
+	}
+
+	/**
 	 * @param string $host Lowercase host.
 	 * @return bool
 	 */
 	private function is_trusted_host( $host ) {
 		if ( null === $this->trusted_hosts ) {
+			$data = self::host_data();
 			/**
 			 * Hosts whose scripts in posts and widgets are not reported.
 			 *
 			 * @param string[] $hosts Lowercase host names.
 			 */
-			$this->trusted_hosts = array_map( 'strtolower', (array) apply_filters( 'wpcybersec_db_trusted_script_hosts', self::TRUSTED_SCRIPT_HOSTS ) );
+			$this->trusted_hosts = array_map( 'strtolower', (array) apply_filters( 'wpcybersec_db_trusted_script_hosts', $data['script_hosts'] ) );
 		}
 		return in_array( $host, $this->trusted_hosts, true );
 	}
@@ -1145,7 +1170,8 @@ class Db_Scanner {
 		}
 		$host = strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) );
 		$path = (string) wp_parse_url( $url, PHP_URL_PATH );
-		return 'www.googletagmanager.com' === $host && '/ns.html' === $path;
+		$data = self::host_data();
+		return '' !== $host && in_array( $host . $path, $data['tag_manager_frames'], true );
 	}
 
 	/**

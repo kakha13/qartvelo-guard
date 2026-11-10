@@ -37,11 +37,12 @@ class Config_Editor {
 	 * @return string Absolute path or '' when not found.
 	 */
 	public static function path() {
-		if ( file_exists( ABSPATH . 'wp-config.php' ) ) {
-			return wp_normalize_path( ABSPATH . 'wp-config.php' );
+		$root = Paths::wp_root();
+		if ( file_exists( $root . 'wp-config.php' ) ) {
+			return $root . 'wp-config.php';
 		}
-		$up = dirname( ABSPATH ) . '/wp-config.php';
-		if ( @file_exists( $up ) && ! @file_exists( dirname( ABSPATH ) . '/wp-settings.php' ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		$up = dirname( $root ) . '/wp-config.php';
+		if ( @file_exists( $up ) && ! @file_exists( dirname( $root ) . '/wp-settings.php' ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
 			return wp_normalize_path( $up );
 		}
 		return '';
@@ -417,7 +418,8 @@ class Config_Editor {
 	 * @return int|false
 	 */
 	private static function settings_require_pos( $code ) {
-		if ( preg_match( '#^[ \t]*require(_once)?[\s(]*ABSPATH\s*\.\s*[\'"]wp-settings\.php#m', $code, $m, PREG_OFFSET_CAPTURE ) ) {
+		// The line wp-config-sample.php ends with: require_once, a constant name, 'wp-settings.php'.
+		if ( preg_match( '#^[ \t]*require(_once)?[\s(]*[A-Z][A-Z0-9_]*\s*\.\s*[\'"]wp-settings\.php#m', $code, $m, PREG_OFFSET_CAPTURE ) ) {
 			return $m[0][1];
 		}
 		return false;

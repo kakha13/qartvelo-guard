@@ -71,6 +71,7 @@ class Network {
 	const NETWORK_PRIME = array(
 		'wpcybersec_settings',
 		'wpcybersec_db_version',
+		'wpcybersec_version',
 		'wpcybersec_autoload_v',
 		self::MIGRATION_OPTION,
 	);
@@ -190,7 +191,7 @@ class Network {
 		if ( ! $todo ) {
 			return;
 		}
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- core options table, one placeholder per name.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- core options table, one placeholder per name.
 		$rows  = (array) $wpdb->get_results( $wpdb->prepare( "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name IN (" . implode( ',', array_fill( 0, count( $todo ), '%s' ) ) . ')', $todo ) );
 		$found = array();
 		foreach ( $rows as $row ) {
@@ -236,7 +237,7 @@ class Network {
 		if ( ! $keys || empty( $wpdb->sitemeta ) ) {
 			return;
 		}
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- core sitemeta table, one placeholder per name; WordPress 6.0-6.5 have no wp_prime_network_option_caches().
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- core sitemeta table, one placeholder per name; WordPress 6.2-6.5 have no wp_prime_network_option_caches().
 		$rows  = (array) $wpdb->get_results( $wpdb->prepare( "SELECT meta_key, meta_value FROM {$wpdb->sitemeta} WHERE site_id = %d AND meta_key IN (" . implode( ',', array_fill( 0, count( $keys ), '%s' ) ) . ')', array_merge( array( $network ), $keys ) ) );
 		$found = array();
 		foreach ( $rows as $row ) {
@@ -724,9 +725,9 @@ class Network {
 			return;
 		}
 		global $wpdb;
-		$table = esc_sql( $wpdb->get_blog_prefix( self::main_site_id() ) . 'options' );
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- core options table of the main site.
-		$rows = (array) $wpdb->get_results( $wpdb->prepare( "SELECT option_name, option_value FROM {$table} WHERE option_name LIKE %s", $wpdb->esc_like( 'wpcybersec_' ) . '%' ), ARRAY_A );
+		$table = $wpdb->get_blog_prefix( self::main_site_id() ) . 'options';
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- core options table of the main site, read once for the migration.
+		$rows = (array) $wpdb->get_results( $wpdb->prepare( 'SELECT option_name, option_value FROM %i WHERE option_name LIKE %s', $table, $wpdb->esc_like( 'wpcybersec_' ) . '%' ), ARRAY_A );
 		foreach ( $rows as $row ) {
 			$name = (string) $row['option_name'];
 			if ( in_array( $name, array( 'wpcybersec_job_lock', 'wpcybersec_job_cancel' ), true ) ) {
@@ -826,9 +827,9 @@ class Network {
 		}
 
 		// Options: trusted administrators are merged, everything else is the main site's (already migrated).
-		$table = esc_sql( $prefix . 'options' );
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- core options table of a site of this network.
-		$trusted = $wpdb->get_var( $wpdb->prepare( "SELECT option_value FROM {$table} WHERE option_name = %s", User_Watch::TRUSTED_OPTION ) );
+		$table = $prefix . 'options';
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- core options table of a site of this network, read once for the migration.
+		$trusted = $wpdb->get_var( $wpdb->prepare( 'SELECT option_value FROM %i WHERE option_name = %s', $table, User_Watch::TRUSTED_OPTION ) );
 		if ( null !== $trusted ) {
 			$ids    = maybe_unserialize( $trusted );
 			$merged = get_site_option( User_Watch::TRUSTED_OPTION, array() );
@@ -836,8 +837,8 @@ class Network {
 			update_site_option( User_Watch::TRUSTED_OPTION, $merged );
 		}
 		if ( ! $main ) {
-			// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-			$names = (array) $wpdb->get_col( $wpdb->prepare( "SELECT option_name FROM {$table} WHERE option_name LIKE %s OR option_name LIKE %s OR option_name LIKE %s", $wpdb->esc_like( 'wpcybersec_' ) . '%', $wpdb->esc_like( '_transient_wpcybersec_' ) . '%', $wpdb->esc_like( '_transient_timeout_wpcybersec_' ) . '%' ) );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- core options table of a site of this network, read once for the migration.
+			$names = (array) $wpdb->get_col( $wpdb->prepare( 'SELECT option_name FROM %i WHERE option_name LIKE %s OR option_name LIKE %s OR option_name LIKE %s', $table, $wpdb->esc_like( 'wpcybersec_' ) . '%', $wpdb->esc_like( '_transient_wpcybersec_' ) . '%', $wpdb->esc_like( '_transient_timeout_wpcybersec_' ) . '%' ) );
 			switch_to_blog( $blog_id );
 			foreach ( $names as $name ) {
 				delete_option( (string) $name );
@@ -878,7 +879,7 @@ class Network {
 			$table = $prefix . 'wpcybersec_' . $name;
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) ) === $table ) {
-				$old[ $name ] = esc_sql( $table );
+				$old[ $name ] = $table;
 			}
 		}
 		if ( ! $old ) {
@@ -890,23 +891,22 @@ class Network {
 			'log'       => 0,
 		);
 
-		// Table names cannot be placeholders before WordPress 6.2 (%i); these are the plugin's
-		// fixed names with a prefix from $wpdb, confirmed by SHOW TABLES above and escaped.
-		// phpcs:disable WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- see above.
+		// Every table name is an identifier placeholder (%i): the plugin's fixed names with a
+		// prefix from $wpdb, the old ones confirmed by SHOW TABLES above.
 		if ( isset( $old['allowlist'] ) ) {
-			$counts['allowlist'] = (int) $wpdb->query( 'INSERT IGNORE INTO ' . Store::table( 'allowlist' ) . ' (kind, value, label, note, created_by, created_at) SELECT kind, value, label, note, created_by, created_at FROM ' . $old['allowlist'] . ' ORDER BY id' );
+			$counts['allowlist'] = (int) $wpdb->query( $wpdb->prepare( 'INSERT IGNORE INTO %i (kind, value, label, note, created_by, created_at) SELECT kind, value, label, note, created_by, created_at FROM %i ORDER BY id', Store::table( 'allowlist' ), $old['allowlist'] ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the plugin's own tables, moved once by the network migration.
 		}
-		if ( isset( $old['manifest'] ) && $main && 0 === (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . Store::table( 'manifest' ) ) ) {
-			$wpdb->query( 'INSERT IGNORE INTO ' . Store::table( 'manifest' ) . ' SELECT * FROM ' . $old['manifest'] );
+		if ( isset( $old['manifest'] ) && $main && 0 === (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM %i', Store::table( 'manifest' ) ) ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the plugin's own tables, moved once by the network migration.
+			$wpdb->query( $wpdb->prepare( 'INSERT IGNORE INTO %i SELECT * FROM %i', Store::table( 'manifest' ), $old['manifest'] ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the plugin's own tables, moved once by the network migration.
 		}
 		if ( isset( $old['log'] ) ) {
-			$counts['log'] = (int) $wpdb->query( 'INSERT INTO ' . Store::table( 'log' ) . ' (event, message, context, user_id, ip, created_at) SELECT event, message, context, user_id, ip, created_at FROM ' . $old['log'] . ' ORDER BY id' );
+			$counts['log'] = (int) $wpdb->query( $wpdb->prepare( 'INSERT INTO %i (event, message, context, user_id, ip, created_at) SELECT event, message, context, user_id, ip, created_at FROM %i ORDER BY id', Store::table( 'log' ), $old['log'] ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the plugin's own tables, moved once by the network migration.
 		}
 		if ( isset( $old['items'] ) ) {
 			$items = Store::table( 'items' );
 			$last  = 0;
 			do {
-				$rows = (array) $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM ' . $old['items'] . ' WHERE id > %d ORDER BY id LIMIT 500', $last ), ARRAY_A );
+				$rows = (array) $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM %i WHERE id > %d ORDER BY id LIMIT 500', $old['items'], $last ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the plugin's own tables, moved once by the network migration.
 				foreach ( $rows as $row ) {
 					$last = (int) $row['id'];
 					$details = json_decode( (string) $row['details'], true );
@@ -919,13 +919,13 @@ class Network {
 					if ( ! $main && Store::SOURCE_DATABASE === (string) $row['source'] && 0 === strpos( (string) $row['path'], 'db:' ) && 0 !== strpos( (string) $row['path'], 'db:site:' ) ) {
 						$row['path'] = 'db:site:' . $blog_id . ':' . substr( (string) $row['path'], 3 );
 					}
-					$dupe = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$items} WHERE type = %s AND status = %s AND sha256 = %s AND path = %s LIMIT 1", $row['type'], $row['status'], $row['sha256'], $row['path'] ) );
+					$dupe = $wpdb->get_var( $wpdb->prepare( 'SELECT id FROM %i WHERE type = %s AND status = %s AND sha256 = %s AND path = %s LIMIT 1', $items, $row['type'], $row['status'], $row['sha256'], $row['path'] ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the plugin's own tables, moved once by the network migration.
 					if ( $dupe ) {
 						continue;
 					}
 					unset( $row['id'] );
 					$row['details'] = wp_json_encode( $details );
-					if ( $wpdb->insert( $items, $row ) ) {
+					if ( $wpdb->insert( $items, $row ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the plugin's own tables, moved once by the network migration.
 						++$counts['items'];
 					}
 				}
@@ -935,9 +935,8 @@ class Network {
 			}
 		}
 		foreach ( $old as $table ) {
-			$wpdb->query( "DROP TABLE IF EXISTS {$table}" );
+			$wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $table ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.DirectDatabaseQuery.SchemaChange -- the site's own copies of the plugin's tables, removed after their rows moved into the network tables.
 		}
-		// phpcs:enable
 		return $counts;
 	}
 

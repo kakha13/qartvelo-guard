@@ -204,7 +204,7 @@ class Developer_Instructions {
 						'title'    => sprintf( __( 'Reinstall a clean WordPress %s core', 'qartvelo-guard' ), $damage['version'] ),
 						'why'      => sprintf(
 							/* translators: 1: number of files, 2: changed, 3: threats, 4: extra files, 5: missing */
-							__( '%1$s core files are affected (%2$s changed, %3$s threats, %4$s extra files in wp-admin or wp-includes, %5$s missing). Replacing core is faster and safer than reviewing them one by one; the one-click reinstall on the Dashboard does it when the server allows it.', 'qartvelo-guard' ),
+							__( '%1$s core files are affected (%2$s changed, %3$s threats, %4$s extra files in wp-admin or wp-includes, %5$s missing). Reinstalling core is faster and safer than reviewing changed core files one by one; "Reinstall WordPress core" on the Dashboard starts WordPress\'s own updater for it when the server allows it. Extra files are not removed by a reinstall and are reviewed in Reports.', 'qartvelo-guard' ),
 							number_format_i18n( $damage['total'] ),
 							number_format_i18n( $damage['modified'] ),
 							number_format_i18n( $damage['threats'] ),
@@ -293,7 +293,7 @@ class Developer_Instructions {
 				$row = $this->live_row( $id );
 				return $row && ( 'maldet_watch' === $id ? 'bad' === $row['state'] : 'unknown' === $row['state'] ) && '' !== $row['code'];
 			case 'wp_cron':
-				// bin/cron.php and the WP-CLI cron lines record every run; none in the last two hours means no real cron job.
+				// The cron lines record their runs (WP-CLI, or requests for wp-cron.php in the rhythm of a cron job); none in the last two hours means no real cron job.
 				return (int) Network::get_option( 'wpcybersec_cli_cron_at', 0 ) < time() - 2 * HOUR_IN_SECONDS;
 			case 'guard':
 				$status = Sysadmin_Tools::call( 'guard_manager', 'status', array(), array() );
@@ -482,12 +482,22 @@ class Developer_Instructions {
 				$snippets       = $tools ? $tools->cron_snippets() : array();
 				$entry['title'] = __( 'Set up a real cron job', 'qartvelo-guard' );
 				$entry['why']   = __( 'WordPress runs scheduled scans only when someone visits the site. A cron job on the server makes them run on time, and no real cron run was seen in the last two hours.', 'qartvelo-guard' );
+				// After the update that removed bin/cron.php on a site that used real cron: its crontab may still start that file.
+				$removed = Sysadmin_Tools::cron_removed_note();
+				if ( '' !== $removed ) {
+					$entry['why'] .= ' ' . $removed;
+				}
 				if ( $snippets ) {
 					$entry['steps'] = array(
 						array(
 							/* translators: %s: web server user name */
 							'text' => sprintf( __( 'Open the crontab of the user that owns the site files (%s here) with "crontab -e" and add these lines:', 'qartvelo-guard' ), $user ),
 							'code' => $snippets[0]['code'],
+						),
+						array(
+							/* translators: %s: name of the other cron variant, for example "System cron without WP-CLI" */
+							'text' => sprintf( __( 'Or use the other variant (%s):', 'qartvelo-guard' ), $snippets[1]['label'] ),
+							'code' => $snippets[1]['code'],
 						),
 						Sysadmin_Tools::cron_disable_step(),
 					);
@@ -669,7 +679,7 @@ class Developer_Instructions {
 			/* translators: %s: date and time */
 			sprintf( __( 'Generated %s UTC. Each item needs someone with access to the server (SSH, SFTP or the hosting panel).', 'qartvelo-guard' ), gmdate( 'Y-m-d H:i' ) ),
 			/* translators: %s: WordPress folder */
-			sprintf( __( 'WordPress folder: %s', 'qartvelo-guard' ), untrailingslashit( wp_normalize_path( ABSPATH ) ) ),
+			sprintf( __( 'WordPress folder: %s', 'qartvelo-guard' ), untrailingslashit( Paths::wp_root() ) ),
 		);
 		$hosting = self::hosting_line();
 		if ( '' !== $hosting ) {
@@ -734,7 +744,7 @@ class Developer_Instructions {
 		header( 'Content-Type: text/plain; charset=utf-8' );
 		header( 'Content-Disposition: attachment; filename="' . $host . '-qartvelo-guard-developer-instructions.txt"' );
 		header( 'X-Content-Type-Options: nosniff' );
-		echo self::as_text( $this->items() ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- plain text download.
+		Sysadmin_Tools::send_file_body( self::as_text( $this->items() ) );
 		exit;
 	}
 

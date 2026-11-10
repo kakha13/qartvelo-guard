@@ -1139,8 +1139,7 @@ class Snapshots {
 		$table = Store::table( 'manifest' );
 		$last  = '';
 		do {
-			// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- $table is Store::table(): $wpdb->prefix plus a fixed name.
-			$rows = (array) $wpdb->get_results( $wpdb->prepare( "SELECT path_hash, path, sha256 FROM {$table} WHERE path_hash > %s ORDER BY path_hash LIMIT 5000", $last ), ARRAY_A );
+			$rows = (array) $wpdb->get_results( $wpdb->prepare( 'SELECT path_hash, path, sha256 FROM %i WHERE path_hash > %s ORDER BY path_hash LIMIT 5000', $table, $last ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- plugin's own table; no WordPress API covers it.
 			foreach ( $rows as $row ) {
 				$last = (string) $row['path_hash'];
 				if ( self::is_sha( $row['sha256'] ) && self::is_diffable_name( (string) $row['path'] ) ) {
@@ -1155,8 +1154,7 @@ class Snapshots {
 		$table   = Store::table( 'items' );
 		$last_id = 0;
 		do {
-			// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- $table is Store::table(): $wpdb->prefix plus a fixed name.
-			$rows = (array) $wpdb->get_results( $wpdb->prepare( "SELECT id, path, sha256, details FROM {$table} WHERE id > %d AND type IN (%s, %s) ORDER BY id LIMIT 1000", $last_id, Store::TYPE_FILE, Store::TYPE_THREAT ), ARRAY_A );
+			$rows = (array) $wpdb->get_results( $wpdb->prepare( 'SELECT id, path, sha256, details FROM %i WHERE id > %d AND type IN (%s, %s) ORDER BY id LIMIT 1000', $table, $last_id, Store::TYPE_FILE, Store::TYPE_THREAT ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- plugin's own table; no WordPress API covers it.
 			foreach ( $rows as $row ) {
 				$last_id = (int) $row['id'];
 				$shas    = array( (string) $row['sha256'] );

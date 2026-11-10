@@ -564,7 +564,8 @@ class Storage {
 		global $wpdb;
 		// The base prefix: every site of a multisite network shares one id (and one data folder).
 		$prefix = ( isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->base_prefix ) ) ? (string) $wpdb->base_prefix : '';
-		return substr( md5( ABSPATH . $prefix ), 0, 8 );
+		// The folder exactly as WordPress defines it, so the id written into existing marker files keeps matching.
+		return substr( md5( Paths::wp_root( true ) . $prefix ), 0, 8 );
 	}
 
 	/**
@@ -582,7 +583,7 @@ class Storage {
 		// Walk up from the WordPress folder. A folder that contains an index file
 		// is most likely served by a web server itself (for example a default
 		// localhost site whose sub folders are the real sites), so skip it.
-		$dir = wp_normalize_path( dirname( untrailingslashit( ABSPATH ) ) );
+		$dir = wp_normalize_path( dirname( untrailingslashit( Paths::wp_root() ) ) );
 		for ( $i = 0; $i < 3; $i++ ) {
 			if ( ! self::path_allowed( $dir ) || ! self::path_allowed( $dir . '/' . $name ) ) {
 				break; // Never suggest (or look at) a folder open_basedir hides.
@@ -596,7 +597,7 @@ class Storage {
 			}
 			$dir = $up;
 		}
-		$fallback = wp_normalize_path( dirname( untrailingslashit( ABSPATH ) ) ) . '/' . $name;
+		$fallback = wp_normalize_path( dirname( untrailingslashit( Paths::wp_root() ) ) ) . '/' . $name;
 		if ( self::path_allowed( $fallback ) ) {
 			return $fallback;
 		}
@@ -1306,7 +1307,7 @@ class Storage {
 		if ( ! Network::get_option( 'wpcybersec_guard_installed', false ) ) {
 			return false;
 		}
-		$bootstrap = ABSPATH . 'wpcybersec-guard.php';
+		$bootstrap = Paths::wp_root() . 'wpcybersec-guard.php';
 		if ( ! @is_file( $bootstrap ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
 			return false;
 		}
@@ -1649,8 +1650,7 @@ class Storage {
 		$like  = $wpdb->esc_like( $from . '/' ) . '%';
 		$last  = 0;
 		do {
-			// phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter -- $table is Store::table(): $wpdb->prefix plus a fixed name.
-			$rows = $wpdb->get_results( $wpdb->prepare( "SELECT id, quarantine_path FROM {$table} WHERE id > %d AND quarantine_path LIKE %s ORDER BY id ASC LIMIT 500", $last, $like ), ARRAY_A );
+			$rows = $wpdb->get_results( $wpdb->prepare( 'SELECT id, quarantine_path FROM %i WHERE id > %d AND quarantine_path LIKE %s ORDER BY id ASC LIMIT 500', $table, $last, $like ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- plugin's own table; no WordPress API covers it.
 			$rows = is_array( $rows ) ? $rows : array();
 			foreach ( $rows as $row ) {
 				$last = (int) $row['id'];
@@ -1834,14 +1834,13 @@ class Storage {
 	}
 
 	/**
-	 * Lets a long file operation finish even when the browser gives up.
+	 * Lets a long file operation finish even when the browser gives up. The
+	 * time limit of the server is left alone: moving the data folder is
+	 * resumable, so a request that runs out of time is continued by the next one.
 	 */
 	public static function keep_running() {
 		if ( function_exists( 'ignore_user_abort' ) ) {
 			@ignore_user_abort( true ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
-		}
-		if ( function_exists( 'set_time_limit' ) ) {
-			@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors, Squiz.PHP.DiscouragedFunctions.Discouraged -- moving the data folder must not stop half way; it is resumable, but a timeout leaves two copies until the next run.
 		}
 	}
 
@@ -1995,9 +1994,9 @@ class Storage {
 	public function is_in_webroot( $path ) {
 		$real  = self::path_allowed( $path ) ? realpath( $path ) : false;
 		$path  = wp_normalize_path( (string) ( $real ? $real : $path ) );
-		$roots = array( wp_normalize_path( (string) ( realpath( ABSPATH ) ?: ABSPATH ) ) );
+		$roots = array( wp_normalize_path( (string) ( realpath( Paths::wp_root() ) ?: Paths::wp_root() ) ) );
 		if ( ! empty( $_SERVER['DOCUMENT_ROOT'] ) ) {
-			$doc = realpath( wp_unslash( $_SERVER['DOCUMENT_ROOT'] ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+			$doc = realpath( wp_unslash( $_SERVER['DOCUMENT_ROOT'] ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- a folder name set by the web server; only resolved and compared with other paths, never printed or stored.
 			if ( $doc ) {
 				$roots[] = wp_normalize_path( $doc );
 			}

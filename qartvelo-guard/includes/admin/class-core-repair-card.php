@@ -8,15 +8,14 @@
 namespace WPCyberSecurity\Admin;
 
 use WPCyberSecurity\Core_Repair;
-use WPCyberSecurity\Network;
 
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Shows the core damage found by the last scan with the two ways to replace
- * core (one click when this server allows it, by hand always), a running or
- * finished reinstall, and the kept backups with "Restore the previous core".
- * Behaviour lives in assets/js/core-repair.js.
+ * Shows the core damage found by the last scan with the two ways to get a
+ * clean core (WordPress reinstalls itself when this server allows it, by hand
+ * always) and the outcome of the last reinstall. Behaviour lives in
+ * assets/js/core-repair.js.
  */
 class Core_Repair_Card {
 
@@ -24,93 +23,80 @@ class Core_Repair_Card {
 	 * Prints the card when there is something to show.
 	 *
 	 * @param string $context dashboard | reports.
+	 * @return bool Whether the damage card (id wpcs-core-card) was printed with its reinstall option.
 	 */
 	public static function render( $context = 'dashboard' ) {
 		$repair = function_exists( 'wpcybersec' ) ? wpcybersec()->core_repair : null;
 		if ( ! $repair instanceof Core_Repair ) {
-			return;
+			return false;
 		}
 		try {
-			$repair->recover();
-			$state   = $repair->state();
-			$damage  = $repair->damage();
-			$backups = 'dashboard' === $context ? $repair->backups() : array();
-			$step    = isset( $state['step'] ) ? (string) $state['step'] : '';
-			if ( ! $damage['show'] && '' === $step && ! $backups ) {
-				return;
+			$result = $repair->last_result();
+			$damage = $repair->damage();
+			if ( $result ) {
+				self::render_result( $result, $damage, $context );
 			}
-			if ( '' !== $step ) {
-				self::render_job( $state );
+			if ( ! $damage['show'] ) {
+				return false;
 			}
-			if ( $damage['show'] && ! in_array( $step, array( 'swap', 'finish' ), true ) ) {
-				self::render_damage( $repair, $damage, $state );
-			}
-			foreach ( $backups as $backup ) {
-				self::render_backup( $backup );
-			}
+			self::render_damage( $repair, $damage, $context );
+			return $damage['repairable'] > 0;
 		} catch ( \Throwable $e ) {
-			return; // Never break the page over this card.
+			return false; // Never break the page over this card.
 		}
 	}
 
 	/**
-	 * Running, finished or failed reinstall.
+	 * Outcome of the last reinstall, until it is dismissed.
 	 *
-	 * @param array $state Job state.
+	 * @param array  $result  Core_Repair::last_result().
+	 * @param array  $damage  damage().
+	 * @param string $context dashboard | reports.
 	 */
-	private static function render_job( array $state ) {
-		$public = Core_Repair::public_state( $state );
-		$step   = $public['step'];
-		if ( 'done' === $step ) {
-			echo '<div class="wpcs-notice wpcs-notice--ok wpcs-dash-alert wpcs-core-result" data-wpcs-core-result><span class="dashicons dashicons-yes-alt" aria-hidden="true"></span><div><p><strong>'
-				. esc_html__( 'WordPress core was reinstalled.', 'qartvelo-guard' ) . '</strong></p><p>' . esc_html( $public['message'] ) . '</p>';
-			if ( ! empty( $state['result']['configs'] ) ) {
-				echo '<p>' . esc_html(
-					sprintf(
-						/* translators: %s: list of files */
-						__( 'These server configuration files from wp-admin or wp-includes are now only in the backup; put them back by hand if you added them on purpose: %s', 'qartvelo-guard' ),
-						implode( ', ', array_map( 'strval', (array) $state['result']['configs'] ) )
-					)
-				) . '</p>';
-			}
-			echo '<p>' . esc_html( Core_Repair::after_steps()[0]['text'] ) . ' <code>wp config shuffle-salts</code></p>';
-			echo '</div><button type="button" class="button wpcs-dash-alert__btn" data-wpcs-core-dismiss>' . esc_html__( 'Dismiss', 'qartvelo-guard' ) . '</button></div>';
-			return;
-		}
-		if ( 'failed' === $step ) {
+	private static function render_result( array $result, array $damage, $context ) {
+		if ( empty( $result['ok'] ) ) {
 			echo '<div class="wpcs-notice wpcs-notice--bad wpcs-dash-alert wpcs-core-result" data-wpcs-core-result><span class="dashicons dashicons-warning" aria-hidden="true"></span><div><p><strong>'
-				. esc_html__( 'The core reinstall did not complete.', 'qartvelo-guard' ) . '</strong></p><p>' . esc_html( $public['message'] ) . '</p></div>'
-				. '<button type="button" class="button wpcs-dash-alert__btn" data-wpcs-core-dismiss>' . esc_html__( 'Dismiss', 'qartvelo-guard' ) . '</button></div>';
+				. esc_html__( 'The core reinstall did not complete.', 'qartvelo-guard' ) . '</strong></p><p>' . esc_html( (string) $result['message'] ) . '</p></div>';
+			echo '<button type="button" class="button wpcs-dash-alert__btn" data-wpcs-core-dismiss>' . esc_html__( 'Dismiss', 'qartvelo-guard' ) . '</button></div>';
 			return;
 		}
-		// Between start and the end of the swap: the script picks it up again.
-		echo '<div class="wpcs-card wpcs-card--warn wpcs-core-card" data-wpcs-core data-wpcs-core-resume="1">';
-		echo '<h2 class="wpcs-card__title"><span class="dashicons dashicons-update" aria-hidden="true"></span>' . esc_html(
-			/* translators: %s: WordPress version */
-			sprintf( __( 'Reinstalling WordPress %s core', 'qartvelo-guard' ), $public['version'] )
-		) . '</h2>';
-		self::progress( $public['percent'], $public['label'], false );
-		echo '<p class="wpcs-core-card__actions"><button type="button" class="button" data-wpcs-core-cancel>' . esc_html__( 'Cancel', 'qartvelo-guard' ) . '</button></p>';
-		echo '</div>';
+		echo '<div class="wpcs-notice wpcs-notice--ok wpcs-dash-alert wpcs-core-result" data-wpcs-core-result><span class="dashicons dashicons-yes-alt" aria-hidden="true"></span><div><p><strong>'
+			. esc_html__( 'WordPress core was reinstalled.', 'qartvelo-guard' ) . '</strong></p><p>' . esc_html( (string) $result['message'] ) . '</p>';
+		// Counted now, not when the reinstall ran: files reviewed since are not named again.
+		$extra = Core_Repair::extra_text( (int) $damage['unknown'], $context );
+		if ( '' !== $extra ) {
+			echo '<p><strong>' . esc_html( $extra ) . '</strong>';
+			if ( 'reports' !== $context ) {
+				echo ' <a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'threats' ) ) ) . '">' . esc_html__( 'Open Reports', 'qartvelo-guard' ) . '</a>';
+			}
+			echo '</p>';
+		}
+		echo '<p>' . esc_html( Core_Repair::after_steps()[0]['text'] ) . ' <code>wp config shuffle-salts</code></p></div>';
+		echo '<button type="button" class="button wpcs-dash-alert__btn" data-wpcs-core-dismiss>' . esc_html__( 'Dismiss', 'qartvelo-guard' ) . '</button></div>';
 	}
 
 	/**
 	 * The damage card with both options.
 	 *
-	 * @param Core_Repair $repair Service.
-	 * @param array       $damage damage().
-	 * @param array       $state  Job state.
+	 * @param Core_Repair $repair  Service.
+	 * @param array       $damage  damage().
+	 * @param string      $context dashboard | reports.
 	 */
-	private static function render_damage( Core_Repair $repair, array $damage, array $state ) {
-		$auto    = $repair->auto_status();
-		$running = $repair->is_active( $state );
+	private static function render_damage( Core_Repair $repair, array $damage, $context ) {
+		$auto = $repair->auto_status();
 		echo '<div class="wpcs-card wpcs-card--bad wpcs-core-card" data-wpcs-core id="wpcs-core-card">';
 		echo '<h2 class="wpcs-card__title"><span class="dashicons dashicons-wordpress" aria-hidden="true"></span>' . esc_html(
-			sprintf(
-				/* translators: %s: number of files */
-				_n( 'WordPress core looks damaged: %s core file affected', 'WordPress core looks damaged: %s core files affected', $damage['total'], 'qartvelo-guard' ),
-				number_format_i18n( $damage['total'] )
-			)
+			$damage['repairable']
+				? sprintf(
+					/* translators: %s: number of files */
+					_n( 'WordPress core looks damaged: %s core file affected', 'WordPress core looks damaged: %s core files affected', $damage['total'], 'qartvelo-guard' ),
+					number_format_i18n( $damage['total'] )
+				)
+				: sprintf(
+					/* translators: %s: number of files */
+					_n( '%s file in wp-admin or wp-includes is not part of WordPress', '%s files in wp-admin or wp-includes are not part of WordPress', $damage['unknown'], 'qartvelo-guard' ),
+					number_format_i18n( $damage['unknown'] )
+				)
 		) . '</h2>';
 
 		$lines = array();
@@ -142,27 +128,43 @@ class Core_Repair_Card {
 		if ( $damage['unknown_exec'] ) {
 			echo '<p class="wpcs-core-card__warn"><strong>' . esc_html__( 'wp-admin and wp-includes should only ever contain WordPress files. An extra PHP file there is a classic backdoor.', 'qartvelo-guard' ) . '</strong></p>';
 		}
-		echo '<p>' . esc_html(
-			sprintf(
-				/* translators: %s: WordPress version */
-				__( 'Replacing the whole WordPress core with a clean copy of version %s is faster and safer than reviewing these files one by one: wp-admin, wp-includes and the core files in the WordPress folder are swapped for the official ones. wp-config.php, wp-content (plugins, themes, uploads, languages), .htaccess and the other files you added stay as they are.', 'qartvelo-guard' ),
-				$damage['version']
-			)
-		) . '</p>';
+		if ( $damage['repairable'] ) {
+			// A localized package is the full one: WordPress's updater replaces its own translation files too.
+			echo '<p>' . esc_html(
+				Core_Repair::is_localized()
+					? sprintf(
+						/* translators: %s: WordPress version */
+						__( 'Reinstalling WordPress core restores every core file from the official package of version %s, which is faster and safer than reviewing changed core files one by one: wp-admin, wp-includes and the core files in the WordPress folder are overwritten with the official ones. wp-config.php, .htaccess, plugins, themes, uploads and the other files you added are not touched.', 'qartvelo-guard' ),
+						$damage['version']
+					) . ' ' . Core_Repair::languages_text()
+					: sprintf(
+						/* translators: %s: WordPress version */
+						__( 'Reinstalling WordPress core restores every core file from the official package of version %s, which is faster and safer than reviewing changed core files one by one: wp-admin, wp-includes and the core files in the WordPress folder are overwritten with the official ones. wp-config.php, wp-content (plugins, themes, uploads, languages), .htaccess and the other files you added stay as they are.', 'qartvelo-guard' ),
+						$damage['version']
+					)
+			) . '</p>';
+		}
+		if ( $damage['unknown'] ) {
+			echo '<p>' . esc_html(
+				'reports' === $context
+					? __( 'Reinstalling WordPress core only overwrites WordPress files. It does not remove files that are not part of WordPress: those stay in wp-admin or wp-includes and stay in the list below, where you quarantine or delete them one by one.', 'qartvelo-guard' )
+					: __( 'Reinstalling WordPress core only overwrites WordPress files. It does not remove files that are not part of WordPress: those stay in wp-admin or wp-includes and stay in Reports, where you quarantine or delete them one by one.', 'qartvelo-guard' )
+			);
+			if ( 'reports' !== $context ) {
+				echo ' <a href="' . esc_url( Admin::page_url( Admin::PAGE_REPORTS, array( 'tab' => 'threats' ) ) ) . '">' . esc_html__( 'Open Reports', 'qartvelo-guard' ) . '</a>';
+			}
+			echo '</p>';
+		}
 
 		echo '<div class="wpcs-core-card__options">';
-		echo '<div class="wpcs-core-option">';
-		echo '<h3>' . esc_html__( 'Reinstall clean core for me', 'qartvelo-guard' ) . '</h3>';
-		if ( $auto['ok'] ) {
-			echo '<p class="wpcs-sub">' . esc_html__( 'Downloads the official package of this version, checks every file against the wordpress.org checksums, then swaps core in a few seconds with maintenance mode on. If the site does not answer afterwards, the old core is put back by itself. The old core is kept for 7 days.', 'qartvelo-guard' ) . '</p>';
-			echo '<p class="wpcs-core-card__actions"><button type="button" class="button button-primary" data-wpcs-core-start' . ( $running ? ' disabled' : '' ) . '><span class="dashicons dashicons-update" aria-hidden="true"></span> ' . esc_html__( 'Reinstall clean core for me', 'qartvelo-guard' ) . '</button></p>';
-			self::progress( 0, '', true );
+		if ( $damage['repairable'] ) {
+			self::render_reinstall_option( $auto, $damage );
 		} else {
-			echo '<p class="wpcs-sub">' . esc_html__( 'Not available on this site:', 'qartvelo-guard' ) . ' ' . esc_html( $auto['reason'] ) . '</p>';
+			// Only extra files: a reinstall by WordPress changes nothing for them. Replacing the two folders by hand removes them all at once.
+			echo '<p class="wpcs-sub">' . esc_html__( 'No WordPress core file is changed or missing, so a reinstall has nothing to restore. When there are too many extra files to review one by one, replacing wp-admin and wp-includes by hand removes all of them at once:', 'qartvelo-guard' ) . '</p>';
 		}
-		echo '</div>';
 
-		echo '<details class="wpcs-core-option wpcs-core-manual"' . ( $auto['ok'] ? '' : ' open' ) . '>';
+		echo '<details class="wpcs-core-option wpcs-core-manual"' . ( $auto['ok'] || ! $damage['repairable'] ? '' : ' open' ) . '>';
 		echo '<summary>' . esc_html__( 'Do it by hand, step by step', 'qartvelo-guard' ) . '</summary>';
 		$hosting = wpcybersec()->hosting;
 		if ( $hosting ) {
@@ -173,7 +175,6 @@ class Core_Repair_Card {
 		if ( 'composer' !== Core_Repair::layout() ) {
 			echo '<p class="wpcs-core-card__actions">';
 			echo '<a class="button" href="' . esc_url( Core_Repair::package_url( $damage['version'] ) ) . '"><span class="dashicons dashicons-download" aria-hidden="true"></span> ' . esc_html__( 'Download the package', 'qartvelo-guard' ) . '</a> ';
-			echo '<button type="button" class="button" data-wpcs-core-maint>' . esc_html__( 'Turn on maintenance mode', 'qartvelo-guard' ) . '</button> ';
 			echo '<a class="button" href="' . esc_url( \WPCyberSecurity\Developer_Instructions::download_url() ) . '">' . esc_html__( 'Download these steps (.txt)', 'qartvelo-guard' ) . '</a>';
 			echo '</p>';
 		}
@@ -182,44 +183,41 @@ class Core_Repair_Card {
 	}
 
 	/**
-	 * A kept backup of a replaced core.
+	 * "Let WordPress reinstall its core": the button, or why it cannot be started from here.
 	 *
-	 * @param array $backup Entry of Core_Repair::backups().
+	 * @param array $auto   Core_Repair::auto_status().
+	 * @param array $damage damage().
 	 */
-	private static function render_backup( array $backup ) {
-		$format = get_option( 'date_format' ) . ' ' . get_option( 'time_format' );
-		$at     = (int) $backup['at'];
-		$until  = $at + Core_Repair::KEEP_DAYS * DAY_IN_SECONDS;
-		echo '<div class="wpcs-notice wpcs-dash-alert wpcs-core-backup"><span class="dashicons dashicons-backup" aria-hidden="true"></span><div><p><strong>'
-			. esc_html(
-				sprintf(
-					/* translators: 1: date, 2: WordPress version */
-					__( 'The WordPress core replaced on %1$s (version %2$s) is kept as a backup.', 'qartvelo-guard' ),
-					wp_date( $format, $at ),
-					(string) $backup['version']
-				)
-			) . '</strong></p><p>'
-			. esc_html(
-				sprintf(
-					/* translators: %s: date */
-					__( 'It is deleted on %s. Restore it only if something stopped working after the reinstall: it holds the old, possibly infected files, and they are reported again.', 'qartvelo-guard' ),
-					wp_date( $format, $until )
-				)
-			) . '</p></div>'
-			. '<button type="button" class="button wpcs-dash-alert__btn" data-wpcs-core-restore data-id="' . esc_attr( (string) $backup['id'] ) . '">' . esc_html__( 'Restore the previous core', 'qartvelo-guard' ) . '</button></div>';
+	private static function render_reinstall_option( array $auto, array $damage ) {
+		echo '<div class="wpcs-core-option">';
+		echo '<h3>' . esc_html__( 'Let WordPress reinstall its core', 'qartvelo-guard' ) . '</h3>';
+		if ( $auto['ok'] ) {
+			$confirm = Core_Repair::confirm_text( $damage );
+			echo '<p class="wpcs-sub">' . esc_html__( 'Starts the updater that is built into WordPress, the same one as Dashboard > Updates > "Re-install": WordPress downloads the official package of this version from wordpress.org, checks it, switches its maintenance mode on for a moment and overwrites its own files. The plugin itself writes no core file. The changed files are not kept.', 'qartvelo-guard' )
+				. ' <a href="' . esc_url( Core_Repair::updates_url() ) . '">' . esc_html__( 'Open Dashboard > Updates instead', 'qartvelo-guard' ) . '</a></p>';
+			echo '<p class="wpcs-core-card__actions"><button type="button" class="button button-primary" data-wpcs-core-start'
+				. ' data-title="' . esc_attr( $confirm['title'] ) . '" data-verdict="' . esc_attr( $confirm['verdict'] ) . '"'
+				. ' data-text="' . esc_attr( $confirm['text'] ) . '" data-confirm-label="' . esc_attr( $confirm['confirm'] ) . '">'
+				. '<span class="dashicons dashicons-update" aria-hidden="true"></span> ' . esc_html__( 'Reinstall WordPress core', 'qartvelo-guard' ) . '</button></p>';
+			echo '<p class="wpcs-sub wpcs-core-card__status wpcs-hidden" data-wpcs-core-status role="status"></p>';
+			self::progress();
+		} else {
+			echo '<p class="wpcs-sub">' . esc_html__( 'Not available on this site:', 'qartvelo-guard' ) . ' ' . esc_html( $auto['reason'] ) . '</p>';
+			if ( 'fs' === $auto['code'] ) {
+				echo '<p class="wpcs-core-card__actions"><a class="button button-primary" href="' . esc_url( Core_Repair::updates_url() ) . '">' . esc_html__( 'Open Dashboard > Updates', 'qartvelo-guard' ) . '</a></p>';
+			}
+		}
+		echo '</div>';
 	}
 
 	/**
-	 * Progress block (same markup as the scan progress).
-	 *
-	 * @param int    $percent Percent.
-	 * @param string $label   Text.
-	 * @param bool   $hidden  Hidden until a job runs.
+	 * Hidden progress block (same markup as the scan progress): core-repair.js
+	 * shows the quick scan in it that follows a reinstall.
 	 */
-	private static function progress( $percent, $label, $hidden ) {
-		echo '<div class="wpcs-progress' . ( $hidden ? ' wpcs-hidden' : '' ) . '" data-wpcs-core-progress>';
-		echo '<div class="wpcs-progress__track"><div class="wpcs-progress__bar" style="width:' . (int) $percent . '%"></div></div>';
-		echo '<div class="wpcs-progress__label"><span class="wpcs-progress__text">' . esc_html( $label ) . '</span><span class="wpcs-progress__current"></span></div>';
+	private static function progress() {
+		echo '<div class="wpcs-progress wpcs-hidden" data-wpcs-core-progress>';
+		echo '<div class="wpcs-progress__track"><div class="wpcs-progress__bar" style="width:0%"></div></div>';
+		echo '<div class="wpcs-progress__label"><span class="wpcs-progress__text"></span><span class="wpcs-progress__current"></span></div>';
 		echo '</div>';
 	}
 
@@ -230,16 +228,8 @@ class Core_Repair_Card {
 	 */
 	public static function i18n() {
 		return array(
-			'starting'     => __( 'Checking the server and downloading the official package', 'qartvelo-guard' ),
-			'swapping'     => __( 'Replacing core (a few seconds)', 'qartvelo-guard' ),
-			'cancelled'    => __( 'Cancelled. Nothing was changed.', 'qartvelo-guard' ),
-			'restoreTitle' => __( 'Restore the previous WordPress core?', 'qartvelo-guard' ),
-			'restoreText'  => __( 'The core from before the reinstall goes back in place, with every file that was in it (also the ones that were reported). The clean core is deleted and a quick scan reports the old files again.', 'qartvelo-guard' ),
-			'restore'      => __( 'Restore the previous core', 'qartvelo-guard' ),
-			'maintTitle'   => __( 'Turn on maintenance mode now?', 'qartvelo-guard' ),
-			'maintText'    => __( 'Visitors and this admin see "Briefly unavailable for scheduled maintenance" until the .maintenance file is deleted or 10 minutes have passed. Do it right before you delete the core files, and keep this page open for the steps.', 'qartvelo-guard' ),
-			'maintOn'      => __( 'Turn on maintenance mode', 'qartvelo-guard' ),
-			'network'      => Network::active() ? __( 'All sites of the network share this core.', 'qartvelo-guard' ) : '',
+			'working' => __( 'WordPress is reinstalling its core: it downloads the official package and replaces its own files. This can take a minute. Keep this page open.', 'qartvelo-guard' ),
+			'timeout' => __( 'The request did not answer. WordPress may still be working: reload this page in a minute to see the result.', 'qartvelo-guard' ),
 		);
 	}
 }

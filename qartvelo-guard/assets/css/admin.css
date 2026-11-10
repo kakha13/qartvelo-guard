@@ -1868,10 +1868,6 @@ body.rtl .wpcs-wrap .wpcs-segmented .button:last-child {
 .wpcs-core-card .wpcs-card__title .dashicons {
 	color: var(--wpcs-bad);
 }
-.wpcs-core-card--warn .wpcs-card__title .dashicons,
-.wpcs-card--warn.wpcs-core-card .wpcs-card__title .dashicons {
-	color: var(--wpcs-warn);
-}
 .wpcs-core-card__counts {
 	margin: 0 0 10px;
 	padding: 0;
@@ -1928,6 +1924,25 @@ body.rtl .wpcs-wrap .wpcs-segmented .button:last-child {
 }
 .wpcs-core-card .wpcs-progress {
 	margin-top: 10px;
+}
+.wpcs-core-card__status {
+	margin: 10px 0 0;
+}
+.wpcs-core-card__status.is-error {
+	color: var(--wpcs-bad);
+}
+.wpcs-core-card__actions .button.is-busy .dashicons {
+	animation: wpcs-core-spin 1.4s linear infinite;
+}
+@keyframes wpcs-core-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.wpcs-core-card__actions .button.is-busy .dashicons {
+		animation: none;
+	}
 }
 .wpcs-core-card .wpcs-howto {
 	margin: 8px 0 0;

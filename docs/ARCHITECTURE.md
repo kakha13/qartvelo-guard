@@ -2,7 +2,7 @@
 
 Plugin folder: `qartvelo-guard/` (slug `qartvelo-guard`, text domain `qartvelo-guard`).
 Namespace `WPCyberSecurity\`, admin classes in `WPCyberSecurity\Admin\`. Prefix for options,
-hooks, cron, AJAX, CSS classes: `wpcybersec_` / `wpcs-`. PHP 7.4+, WordPress 6.0+. No build step.
+hooks, cron, AJAX, CSS classes: `wpcybersec_` / `wpcs-`. PHP 7.4+, WordPress 6.2+ (table and column names in SQL are `%i` placeholders of `$wpdb->prepare()`). No build step.
 
 ## What the plugin does
 
@@ -27,9 +27,16 @@ hooks, cron, AJAX, CSS classes: `wpcybersec_` / `wpcs-`. PHP 7.4+, WordPress 6.0
   a public `register()` method. `Plugin::boot()` creates and registers everything.
 - Reach other services through `wpcybersec()->name` (see the list below). Never construct
   core services yourself except `new Storage()` in code that may run before boot.
-- Escape all output (`esc_html`, `esc_attr`, `esc_url`, `wp_kses_post`), check the capability with
-  `Admin\Admin::can()` (`manage_options` on a single site, `manage_network_options` on multisite)
-  and a nonce on every form/AJAX/admin-post handler.
+- Escape all output at the statement that prints it ("escape late"): `esc_html`, `esc_attr`, `esc_url`
+  for values, and for HTML that a helper method returns (badges, cells, code blocks, whole rows)
+  `echo wp_kses( $html, Admin\Kses::allowed() );` with the call written out at the echo. No
+  `phpcs:ignore` for `WordPress.Security.EscapeOutput` (only `guard/guard.php`, which runs before
+  WordPress, has two). A tag or attribute that a helper starts to use must be added to
+  `Admin\Kses::allowed()`, or wp_kses() silently removes it; inline styles and URL schemes that kses
+  strips belong in a CSS class instead. Generated file downloads that are not HTML (cgav.sh, the
+  fapolicyd trust list, the developer instructions) go through `Sysadmin_Tools::send_file_body()`.
+  Check the capability with `Admin\Admin::can()` (`manage_options` on a single site,
+  `manage_network_options` on multisite) and a nonce on every form/AJAX/admin-post handler.
 - Plugin options go through `Network::get_option()` / `update_option()` / `add_option()` /
   `delete_option()` (network options on multisite), plugin cron events through
   `Network::schedule_event()` and friends (main site only), plugin page links through
@@ -45,7 +52,7 @@ hooks, cron, AJAX, CSS classes: `wpcybersec_` / `wpcs-`. PHP 7.4+, WordPress 6.0
   (atomic temp file + rename), `rename` (one-step rename on the same filesystem, folders too,
   never onto an existing path), `copy`, `delete_tree` (recursive, never follows symlinks:
   WP_Filesystem_Direct::delete() would) and `same_device`. Raw PHP file functions stay only where WordPress is not loaded
-  (`guard/guard.php`, `bin/cron.php`) or for streams (`fopen`/`flock`), each with a
+  (`guard/guard.php`) or for streams (`fopen`/`flock`), each with a
   `phpcs:ignore ... -- reason` comment. The release must pass Plugin Check with no errors.
 
 ## Services (`wpcybersec()->...`)
@@ -110,7 +117,7 @@ Static helpers: `Paths` (core), `Fs` (core), `Guard_Config` (core), `Installer` 
   `problem($status)` gives the admin notice text `{ level, title, text, fix, code }`. Uploads are
   never blocked because this storage failed (Upload_Gate lets a clean upload through and logs
   `upload_not_held` once an hour; only malicious ones are refused). `configured_dir()`,
-  `default_dir()`, static `site_id()` (md5 of ABSPATH plus `$wpdb->base_prefix`, so every site of a
+  `default_dir()`, static `site_id()` (md5 of the WordPress folder as defined, `Paths::wp_root( true )`, plus `$wpdb->base_prefix`, so every site of a
   network shares it; written into `.wpcybersec-site`, `marker_matches()`, `write_marker()`),
   `suggested_outside_dir()` (next to the WordPress folder; when open_basedir hides that, a
   writable folder inside an allowed one that is not served and not a temp folder; callers check
@@ -119,7 +126,18 @@ Static helpers: `Paths` (core), `Fs` (core), `Guard_Config` (core), `Installer` 
   (open_basedir: paths outside it are never touched or suggested), `dir_usable()`, `relocate($target, $after_switch)` (copy, verify,
   switch, remove; resumable with `resume_move()` / `move_pending()`, option
   `wpcybersec_data_move`; refused on multisite and with the constant).
-- `Paths` (static): `scan_root()`, `rel($abs)`, `abs($rel)`, `hash($rel)`, `ext($name)`,
+- `Paths` (static): `wp_root()` (the WordPress folder, normalized, always with a trailing slash;
+  the ONLY place in the plugin that reads the `ABSPATH` constant: every class asks this method.
+  `wp_root( true )` is the value as defined, for `Storage::site_id()` only. The other allowed
+  mentions of the constant are the `defined( 'ABSPATH' ) || exit` guards, uninstall.php's one local
+  variable, and core includes written exactly as `if ( ! function_exists( 'x' ) ) { require_once
+  ABSPATH . 'wp-admin/includes/file.php'; }` (or `ABSPATH . WPINC . '/...'`) with a function or
+  class of that file used on the next line: no `is_readable()` test, no path in a variable, no
+  include in a helper away from the use. Folders are never built from strings: wp-content is
+  `WP_CONTENT_DIR`, plugins `WP_PLUGIN_DIR`, mu-plugins `WPMU_PLUGIN_DIR`, themes
+  `get_theme_root()` / `$wp_theme_directories`, languages `WP_LANG_DIR`, uploads `wp_upload_dir()`,
+  the plugin itself `WPCYBERSEC_DIR`; none of them behind a `defined()` fallback),
+  `scan_root()`, `rel($abs)`, `abs($rel)`, `hash($rel)`, `ext($name)`,
   `is_executable($name)`, `is_excluded($rel)`. Scan set: `scan_set()` is the scan root plus the
   WordPress folders outside it (ABSPATH, WP_CONTENT_DIR, WP_PLUGIN_DIR, WPMU_PLUGIN_DIR, the
   uploads folder: walked in full; the home folder of WordPress in a subfolder or Bedrock's `web/`:
@@ -164,15 +182,31 @@ Static helpers: `Paths` (core), `Fs` (core), `Guard_Config` (core), `Installer` 
 - `Decisions`: `ACTIONS`, static `available($item)`, `apply($action, $id)`, `bulk($action, $ids)`.
   Critical files (static `is_critical_path($abs)` / `is_critical($item)`: wp-config.php, the root
   `CRITICAL_ROOT` files, and wp-admin/ or wp-includes/ files listed in the core checksums) are never
-  offered or allowed `quarantine` or `delete`, and Scan_Job never auto-quarantines them. A changed
-  critical core file still in place gets `restore_official` (verified `Originals` copy, current
-  version kept as a snapshot first, atomic `Fs::replace()`, item becomes `resolved`).
+  offered or allowed `quarantine` or `delete`, and Scan_Job never auto-quarantines them. The plugin
+  never writes a core file: for a changed core file still in place (`needs_core_reinstall($item)`,
+  from the read-only `official_source($item)`) Reports shows a "Reinstall WordPress core" link to
+  the core card instead of a decision, and WP-CLI names `core-reinstall` (see Core reinstall).
+  Held out of wp-admin, wp-includes or the plugin's own folder (static `in_core_dir($item)`,
+  `held_from_core($item)`): any other file there can be moved to quarantine (by hand or by the
+  automatic quarantine), but the plugin never creates or overwrites a file in those folders, so `Quarantine::restore()`
+  refuses the way back (`wpcybersec_q_core`, `Quarantine::core_refusal()`) and `available()` is
+  exactly `delete` (the held copy only, also for a critical file; the live path is never touched).
+  `apply()` answers approve / ignore / restore with the same sentence, WP-CLI `approve` prints it,
+  Reports shows the note "does not write into wp-admin or wp-includes ..." with the Download link
+  (rows carry `data-core`, so admin.js offers only Delete after a bulk quarantine). Exception: once
+  the identical file is in its place again (core reinstall, or put back by hand) the usual actions
+  return, because restoring then only removes the held copy. `Paths::in_core_dir()` compares the
+  WordPress folder as defined and resolved, and the path as given and resolved.
 - `Guard_Config` (static): `file()`, `allow_file()`, `read()`, `write($config)`,
   `set_enabled($bool)`, `atomic_write($file, $content)`.
 - `Ajax`: endpoints listed in `class-ajax.php` (scan_start/tick/status/cancel, item_action,
   bulk_action, counts, unlock, lock, diff_summary, clamav_enable). Nonce action `Ajax::NONCE` = `wpcybersec_ajax`.
 - `Admin\Assets`: `register()`, `enqueue()`. Handles `wpcybersec-base` (css) and
   `wpcybersec-core` (js, exposes `window.WPCyberSec`, see header comment in `assets/js/core.js`).
+- `Admin\Kses` (static, `includes/admin/class-kses.php`): `allowed()` is the second argument of
+  wp_kses() for the plugin's own admin markup (every tag and attribute named, `aria-*` one by one
+  because WordPress 6.2 has no wildcard for them, `data-*` through the core wildcard);
+  `document()` adds html, head, meta, title and body for the downloadable report.
 - `Installer`: `CRON_HOOKS`, `REDIRECT_OPTION` (`wpcybersec_activation_redirect`, set on activation),
   `activate($network_wide)`, `install()` (on multisite first `Network::migrate_main_options()`,
   then tables and defaults, then a bounded `Network::migrate_sites()` pass), `maybe_upgrade()`
@@ -220,7 +254,10 @@ draft, private, pending, future), and code plugin storage reported as medium "re
 primary key range; `Scan_Job` runs it in the finishing phase of full and baseline scans, with
 opts `database => true`, and once a day for cron scans. Details: table, key, label, hits
 (redacted snippets), fingerprint, seen_run. A complete run resolves open findings it no longer
-sees. Last run summary: option `wpcybersec_db_scan`.
+sees. Last run summary: option `wpcybersec_db_scan`. Host names the scan compares values with
+(embed providers whose scripts are not reported, the tag manager noscript frame) are data, not code:
+`includes/data/trusted-script-hosts.json`, read once per request by `Db_Scanner::host_data()`
+(missing or broken file: empty lists); filter `wpcybersec_db_trusted_script_hosts` as before.
 
 Administrator watch (`User_Watch`): option `wpcybersec_trusted_admins` (user ids, seeded from the
 current administrators on install/upgrade or first use). Untrusted administrators (role or
@@ -376,12 +413,21 @@ Files: `includes/class-recent-changes.php`, `Admin\Reports_Page::render_recent_t
 
 ## Downloadable report
 
-Files: `includes/class-site-report.php`; admin-post `wpcybersec_report` (GET, nonce
+Files: `includes/class-site-report.php`, `assets/css/report.css`; admin-post `wpcybersec_report` (GET, nonce
 `wpcybersec_report`, `Admin::report_url()` / `Admin::report_button()` on the Reports and Dashboard
 headers) sends `<host>-security-report-<Y-m-d>.html` as an attachment; `wp wpcybersec report
 [--file=path]`.
 
-- One HTML document, inline CSS, no scripts or external assets: overview (site, versions),
+- One HTML document, one style block, no scripts or external assets. The PHP holds no style
+  tag: `Site_Report::print_style()` reads `assets/css/report.css`, adds it with
+  `wp_add_inline_style()` to the handle `wpcybersec-report` (registered without a file), calls
+  `wp_print_styles()` and deregisters the handle again, so it never reaches an admin page.
+  `parts()` returns the document as `head` (html, head, meta, title) and `body` (from `</head>`
+  to the end); `build()` is `DOCTYPE . head . style . body` as one string (WP-CLI). The browser
+  download (`Admin::handle_report()`) prints the same pieces: the doctype, `wp_kses( head,
+  Kses::document() )`, `print_style()`, `wp_kses( body, Kses::document() )`; the stylesheet never
+  goes through wp_kses(), and no Content-Length header is sent.
+  Sections: overview (site, versions),
   last scan (`last_result` incl. missing core, database findings, new administrators, last
   database scan), open items (pending, most severe first, up to 300; hits with
   `Diff::redact_snippet()` snippets; `Diff::excerpt()` of the first 40 file/threat items, 200
@@ -396,7 +442,7 @@ headers) sends `<host>-security-report-<Y-m-d>.html` as an attachment; `wp wpcyb
 ## Engine module (owner: engine builder)
 
 Files: `includes/class-scanner.php`, `includes/class-signatures.php`,
-`includes/class-file-monitor.php`, `includes/class-scan-job.php`, `bin/cron.php`.
+`includes/class-file-monitor.php`, `includes/class-scan-job.php`.
 
 ### `Scanner`
 - `register()`: nothing required (may add cache cleanup).
@@ -474,7 +520,7 @@ Only one job at a time. State in option `wpcybersec_job` (not autoloaded); file 
   malware, trigger, files_total, files_done, new, modified, deleted, threats, quarantined,
   skipped, started_at (unix), finished_at (unix), current (rel path), message, percent }`.
 - `cancel()`, `last_result()` (status of the last finished job, option `wpcybersec_last_scan`),
-  `run_to_completion(callable $progress = null)` for CLI and bin/cron.php.
+  `run_to_completion(callable $progress = null)` for WP-CLI.
 - Decisions per file:
   - `baseline`: everything trusted, except malware hits (when `malware`) -> threat item.
   - `incremental`: unchanged files (same size+mtime) are skipped; new/changed files are hashed,
@@ -488,37 +534,51 @@ Only one job at a time. State in option `wpcybersec_job` (not autoloaded); file 
 - Calls `wpcybersec()->notifier->item_created($id)` for each new item, and
   `wpcybersec()->notifier->scan_finished($status)` at the end.
 
-### `bin/cron.php`
-CLI runner for real cron without WP-CLI: `php bin/cron.php [--full|--baseline] [--no-malware] [--isolated] [--quiet] [--wp=/abs/path] [--url=https://example.com/]`.
-Refuses to run from the web (CLI, or php-cgi started from a shell or cron without request
-variables; use `php-cgi -q`). Without `--wp` it walks up from its own folder, then from the
-current one, and looks for `wp-load.php` in each folder and in its `wp/` and `web/wp/` subfolders
-(Bedrock). Loads `wp-load.php`, runs a scan to completion, prints a one-line
-summary, exits 1 when the scan failed. `--url` sets HTTP_HOST / REQUEST_URI; without it a
-multisite host comes from `DOMAIN_CURRENT_SITE` / `PATH_CURRENT_SITE` in wp-config.php. When
-WordPress exits while loading (no site for the address) a shutdown function says so, with the
-multisite hint (pass the network address; with a wrong `--url` it names the value that matched no
-site), and exits 1.
-Records network option `wpcybersec_cli_cron_at` (proof that real cron runs). WP-CLI records it too
-(`Cli::record_cron_run()`): after `wp wpcybersec scan` and after `wp cron event run` (hook
+### Real cron
+No file of the plugin loads WordPress itself (the `bin/cron.php` runner and its `--isolated`
+mode were removed after the third WordPress.org review). Scans from a crontab go through WP-CLI
+(`wp wpcybersec scan [--full] --path=<root> [--url=<network address>] --quiet`) or through
+WordPress cron: a cron job that requests `wp-cron.php?doing_wp_cron` runs the scheduled scan
+(`wpcybersec_scheduled_scan`, the `scan_schedule` setting) on time.
+`Sysadmin_Tools::cron_jobs( $with_cli = null )` is the one source: with WP-CLI (`has_wp_cli()`:
+running under WP-CLI or `wp_cli_path()` found the program) the quick scan (hourly), the full scan
+(nightly) and `wp cron event run --due-now` every 5 minutes (on multisite for every site of
+`wp site list`); without WP-CLI one job, `curl` of `wp_cron_url()` (the main site's
+`wp-cron.php?doing_wp_cron`) every minute (`* * * * *`): a scheduled scan works about 20 seconds per
+request and asks for its next step 60 seconds later (`File_Monitor::tick_and_chain()`), and
+wp-cron.php only runs what is due, so a slower job (hosts that allow only every 5 or 15 minutes)
+still works but the scan takes longer (`cron_slow_host_note()`, printed with the job).
+The WP-CLI lines name the wp program by its full path when `wp_cli_path()` found it
+(`wp_cli_cron()`: cron's PATH is /usr/bin:/bin); a bare `wp` plus the "use the full path" sentence
+only when the path is unknown. `cron_crontab()` is the crontab block, `cron_snippets()`
+returns both variants (the one that fits the server first, marked recommended) plus the
+wp-config.php line. `Hosting::cron_steps()` prints the jobs per panel (`cron_job_text()`): Plesk gets
+the wp-cron.php job as a "Fetch a URL" task, GridPane and SpinupWP (they run WordPress cron
+themselves) only the two WP-CLI scan jobs.
+Network option `wpcybersec_cli_cron_at` is the proof that real cron runs. `Cli::record_cron_run()`
+writes it after `wp wpcybersec scan` and after `wp cron event run` (hook
 `after_invoke:cron event run`), only when run with `--quiet` or without a terminal, so a command typed
-once by hand does not count.
-`Sysadmin_Tools::cron_snippets()` builds the crontab lines (`cron_url_arg()` adds `--url` on
-multisite). The plain `php wp-cron.php` line has no host either, so on multisite it becomes
-`curl` of the main site's `wp-cron.php?doing_wp_cron` (where every plugin event lives), and the
-WP-CLI variant runs `wp cron event run --due-now --url=<site>` for every site of `wp site list`.
-
-`--isolated` (clean-room scan): before `wp-load.php`, filters are pre-registered in the
-`$wp_filter` global (turned into WP_Hook objects by `WP_Hook::build_preinitialized_hooks()`):
-`option_active_plugins` / `site_option_active_sitewide_plugins` keep only this plugin (matched by
-real path), `template_directory` / `stylesheet_directory` return a folder without functions.php
-(wp-settings.php includes a theme's functions.php only when it exists there), and
-`pre_update_option_active_plugins`, `pre_update_site_option_active_sitewide_plugins`,
-`pre_update_option_template`, `pre_update_option_stylesheet` keep the old value, so nothing is
-deactivated persistently. After boot it checks `get_included_files()` for code of any other plugin
-or theme (symlinked folders resolved) and exits 2 without scanning when it finds some. mu-plugins
-and drop-ins cannot be isolated: they are listed ("mu-plugins still load: N found").
-`wp wpcybersec scan --isolated` only explains this (WP-CLI has loaded plugins already).
+once by hand does not count. `Sysadmin_Tools::record_wp_cron_request()` (called from `Plugin::boot()`
+while `wp_doing_cron()`) looks at web requests of `wp-cron.php` with an empty `doing_wp_cron` key
+(WordPress starts its own cron with a value in that key, so an empty one is a cron job or an
+outside caller). One such request proves nothing, anybody can send it: the count lives in the
+network option `wpcybersec_wp_cron_seen` (`{ last, n }`, not autoloaded, touched on these requests
+only) and `wpcybersec_cli_cron_at` is written (at most once in four minutes) once
+`CRON_RHYTHM_RUNS` (3) requests came in a row, each `CRON_RHYTHM_MIN` (50 s) to `CRON_RHYTHM_MAX`
+(15 minutes plus one minute for a slow start) after the one before. A longer gap starts the count
+again, a request that comes sooner is ignored. `php wp-cron.php` from a shell is not recorded.
+`Sysadmin_Tools::cron_removed_note()` returns one sentence ("Version 1.2.0 removed bin/cron.php
+...") while the network option `wpcybersec_cron_note` (`CRON_NOTE_OPTION`, the time of the update)
+exists and is younger than `CRON_NOTE_DAYS` (30). `Installer::record_version()` sets it once: the
+plugin version that ran last is kept in `wpcybersec_version` (autoloaded, in
+`Network::NETWORK_PRIME`; versions before 1.2.0 stored none), and an update from a version below
+1.2.0 on a site whose `wpcybersec_cli_cron_at` was ever written stores the flag. A new install never
+gets it, a later update does not set it again. It is removed by a scan that WP-CLI ran from the
+crontab (`Cli::scan()` when `record_cron_run()` recorded the run) and by the "Done, hide this" link
+next to the note (`Admin::dismiss_url( 'cron_note' )`, `admin_post_wpcybersec_dismiss_notice`, for
+every administrator). Shown in Settings > Advanced > Real cron, the `wp_cron` server health check
+and the developer instructions. A `wp wpcybersec scan` run also
+refreshes a stale ClamAV self-test (`Scanner::refresh_selftest_if_stale()`).
 
 ## Gates module (owner: gates builder)
 
@@ -704,7 +764,9 @@ Files: `includes/admin/class-wizard.php`, `includes/admin/class-settings-page.ph
   `cron_snippets()`, `apache_uploads_rules()`, static `nginx_uploads_rule()` (the one nginx rule that
   blocks PHP in uploads, `UPLOADS_EXEC_PATTERN`; Hardening's manual steps use it and
   `apache_uploads_rules()` too), `nginx_rules()`, `permission_commands()`,
-  `fapolicyd_trust_export()`, `fapolicyd_rules()`, `inotify_script()`, `maldet_steps()`,
+  `fapolicyd_trust_export()` (`fapolicyd_trust_lines()` is the same with newlines, for the download),
+  static `send_file_body($chunks)` (writes the body of a generated plain text download to
+  `php://output`; the caller sends the headers and exits), `fapolicyd_rules()`, `inotify_script()`, `maldet_steps()`,
   `antivirus_status()` (ClamAV shows "Unknown (hosting hides it)" instead of "Not installed" when
   `clamav_hidden()` says the host may hide the binary; maldet likewise with `maldet_hidden()`, key
   `maldet.hidden`), static `maldet_detect()`, `inotifywait_installed()`,
@@ -726,7 +788,7 @@ Files: `includes/admin/class-wizard.php`, `includes/admin/class-settings-page.ph
   -o+w -not -type l -exec chmod o-w {} +`), check id `world_writable`, `display_path()`. WP-CLI:
   `wp_cli($bin)` is `wp`, or this site's PHP plus the wp program (`/usr/local/lsws/lsphp83/bin/php
   /usr/local/bin/wp`, `"$(command -v wp)"` when wp is not found) when `is_default_php()` says the default
-  php of a shell is another binary; used by the WP-CLI cron variant, managed-host cron steps and the core
+  php of a shell is another binary; used by the WP-CLI cron jobs, the inotify watcher script, managed-host cron steps and the core
   reinstall lines. `php_binary()` returns lsphpXX/bin/php for lsphp even when open_basedir hides it.
   `site_slug()` names per-site server files (fapolicyd `35-wordpress-<slug>.rules` and
   `wordpress-<slug>.trust`, `inotify_script_path()` `/usr/local/bin/wpcybersec-watch-<slug>.sh`). `server-tools/cgav.sh` (also offered as a
@@ -735,8 +797,8 @@ Files: `includes/admin/class-wizard.php`, `includes/admin/class-settings-page.ph
   re-run, never deletes site files).
 - `Cli`: static `register()` -> `WP_CLI::add_command('wpcybersec', ...)` with `status`, `scan`,
   `pending`, `approve`, `deny`, `allowlist`, `guard`, `unlock`, `lock`, `report`,
-  `core-reinstall [--yes]` (Core_Repair start/tick/swap, asks before the swap without --yes, then
-  runs the quick scan to completion).
+  `core-reinstall [--yes]` (`Core_Repair::reinstall()`, asks first without --yes, then runs the
+  quick scan to completion). `restore-official` only prints an error that points to `core-reinstall`.
 
 ## Hosting panel detection
 
@@ -780,24 +842,43 @@ Files: `includes/class-core-repair.php` (`Core_Repair`, service `core_repair`),
 `includes/admin/class-core-repair-card.php` (`Admin\Core_Repair_Card::render( 'dashboard'|'reports' )`),
 `assets/js/core-repair.js` (enqueued on the Dashboard and Reports pages, strings in `wpcybersecCore`).
 
+Rule: the plugin never creates or overwrites a file in wp-admin or wp-includes, not a whole core and
+not a single file, and it never writes into its own plugin folder (`Paths::in_core_dir()` answers
+for all three). A clean core comes from WordPress's own updater
+(`Core_Upgrader`, the code behind Dashboard > Updates > "Re-install version X"), which the plugin only
+starts, or from the administrator following the steps by hand. What the plugin does do: a file that
+an administrator (or the automatic quarantine) moves to quarantine is moved out of its place, also
+out of wp-admin or wp-includes when it is not a critical file; it can be put back where it was
+(also a core file in the WordPress folder itself, such as xmlrpc.php), except into wp-admin,
+wp-includes and the plugin's own folder (`Quarantine::restore()`, `Decisions::held_from_core()`). The
+"Remove write access for other users" fix (`Hardening::fix_world_writable()`) changes permissions
+only. On a localized package (the full one) `update_core()` also copies the package's
+wp-content/languages over WordPress's own translation files; the texts say so
+(`Core_Repair::languages_text()`) and `Install_Gate` re-trusts `WP_LANG_DIR` with the core folders
+when `Scanner::package_locale()` is not en_US.
+
 - Detection, `damage()`: open (pending, not held) file/threat items whose `original_path` is under
   ABSPATH `wp-admin/`, `wp-includes/` or the WordPress root (one query on the items table, skipped
   when `Store::counts()` has nothing pending), classified by `classify()` from what the scan stored:
   `modified` (`details.verified = core`, `checksum = mismatch`; a localized version.php never),
   `unknown` (sig `core_unknown_file` / `core_unknown_config`, or `checksum = unknown_file`; `exec`
   when it can run code), `threat` (other open threats in core folders or root core file names,
-  `ROOT_FALLBACK`), plus `missing_core` of the last scan. One count per path. `show` = total >=
-  `THRESHOLD` (5, filter `wpcybersec_core_damage_threshold`) or any unknown executable file. Root
-  PHP files that are not core (backdoor.php) are not counted: they stay in Reports. With 1 to 4
-  changed files the per-file "Restore official file" stays the way. Called only on the Dashboard,
-  the Reports Pending/Threats tabs (no search or filter), the downloadable report
-  (`Site_Report::section_core()`) and Developer instructions (entry `core_reinstall`); normal admin
-  pages never load it.
-- Card: counts, why replacing core beats reviewing files, option B (when `auto_status()` is ok) and
-  option A ("Do it by hand", open when B is not available) with "Download the package", "Turn on
-  maintenance mode" (AJAX `core_maintenance`, standard `.maintenance`, 10 minutes) and the .txt of
-  Developer instructions. A running job (resumed by the script on page load), the finished or
-  failed job (Dismiss) and every kept backup ("Restore the previous core", Dashboard only).
+  `ROOT_FALLBACK`), plus `missing_core` of the last scan. One count per path. `repairable` =
+  modified + threats + missing (what a reinstall puts right), `total` = repairable + unknown.
+  `show` = repairable >= `THRESHOLD` (1, filter `wpcybersec_core_damage_threshold`) or any unknown
+  executable file. Root PHP files that are not core (backdoor.php) are not counted: they stay in
+  Reports. Called only on the Dashboard, the Reports Pending/Threats tabs (no search or filter), the
+  downloadable report (`Site_Report::section_core()`) and Developer instructions (entry
+  `core_reinstall`); normal admin pages never load it.
+- Card (`id="wpcs-core-card"`): the outcome of the last reinstall (`last_result()`, Dismiss), the
+  counts, what a reinstall does and does not do (files that are not part of WordPress are not
+  removed by it: they stay reported and are quarantined or deleted one by one), "Let WordPress
+  reinstall its core" (the button when `auto_status()` is ok, else the reason; a link to Dashboard >
+  Updates when WordPress would ask for FTP details) and "Do it by hand" (open when the button is not
+  available) with "Download the package" and the .txt of Developer instructions. With only unknown
+  files (`repairable` 0) the reinstall option is left out and the card says so. `render()` returns
+  whether the card with the reinstall option was printed; Reports uses that for the row link
+  (`#wpcs-core-card`, else the Dashboard card, else `Core_Repair::updates_url()`).
 - `layout()`: `standard`, `composer` (composer.json one or two folders up naming roots/wordpress,
   johnpbloch/wordpress, wordpress/core-implementation or roots/bedrock, ABSPATH under vendor/, or
   Bedrock's `web/wp/`), `symlink` (wp-admin or wp-includes is a link), `custom` (WPINC renamed).
@@ -808,58 +889,53 @@ Files: `includes/class-core-repair.php` (`Core_Repair`, service `core_repair`),
   `https://downloads.wordpress.org/release/wordpress-<v>-no-content.zip`), the English-package note
   for localized sites, the panel's file manager (`Hosting::file_manager()`: cPanel, Plesk,
   DirectAdmin, CyberPanel, aaPanel, HestiaCP, VestaCP, CloudPanel, CWP, Virtualmin, FASTPANEL,
-  ISPmanager, Hostinger, SiteGround; SFTP otherwise), upload first, maintenance, delete wp-admin,
-  wp-includes and exactly the root files of the checksum list (`root_files()`), keep everything
-  else (what is in the folder is listed), extract, move up, clean up, full scan, then
-  `after_steps()` (passwords, salts, plugins/themes/uploads). Other ways: `ssh_block()` (subshell
-  with `set -e`, refuses without wp-config.php / wp-content, curl, `.sha1` check, unzip or PHP
-  ZipArchive, `.maintenance`, delete exactly the core paths, copy, chown to the owner of
-  wp-content when run as root, clean up) and `wp core verify-checksums` (with the warning against
-  `wp core download --force` on 7.x). Composer: `composer reinstall <package>` instead, no delete
-  steps. Managed hosts: ask the host or use its restore tools.
-- One click, `auto_status( $live )`: refused with the reason for DISALLOW_FILE_MODS, the freeze lock,
-  a non-standard layout, a managed host, no ZipArchive, `get_filesystem_method()` other than
-  `direct`, ABSPATH/wp-admin/wp-includes not writable, or no place (`places()`): the work folder
-  `<data>/core-stage/<id>` (data folder on the same filesystem as ABSPATH) else
-  `<parent of ABSPATH>/.wpcybersec-core-stage`; the backup `<data>/core-backup/<id>` when the data
-  folder is outside the web root, or inside it on Apache/LiteSpeed with its deny-all .htaccess, or
-  when the web probe says blocked, else `<parent>/.wpcybersec-core-backup-<id>` (same filesystem,
-  writable, not served, not in the scan set). Never a backup that the web can reach.
-- Job (option `wpcybersec_core_reinstall`, not autoloaded; AJAX `core_reinstall`
-  do=start|tick|swap|cancel|status|dismiss): `start()` (checks incl. the live ones, no running scan,
-  `checksums( $version )` = `get_core_checksums( $version, 'en_US' )` without wp-content, saved as
-  `checksums.json` in the work folder) -> `download` (`download_url()`, compared with the release
-  `.sha1`) -> `extract` (every entry name checked first: under `wordpress/`, no `..`, no wp-content;
-  then ZipArchive batches within `BUDGET`) -> `verify` (md5 of every listed file, then no extra file;
-  any difference fails with nothing changed) -> `ready` (`confirm_text()` for `confirmDialog()`) ->
-  `swap()`: backup folder with marker `.wpcybersec-core-backup` (JSON id, abspath, version, added
-  root files, disabled configs), `exchange()`: wp-admin/includes/file.php and update.php loaded
-  first, a loopback of the home page, `.maintenance` (`maintenance_on()`, an existing foreign one is
-  kept), wp-includes then wp-admin renamed into the backup and the verified ones renamed in, root
-  files copied to `<backup>/root/` and replaced atomically (`put_file()`), every step journaled in
-  the state, `opcache_reset()`, maintenance off, `post_check()` (version.php included in a closure
-  must report the version; home page not 5xx, and answering when it answered before; filter
-  `wpcybersec_core_reinstall_check`), on failure maintenance on, `rollback()` of the journal,
-  maintenance off. A shutdown function rolls back when PHP dies mid-swap; `recover()` (every
-  request that looks at the job) rolls back a swap whose state is older than `STALE`. When a step
-  cannot be undone, the backup and work folder are kept. Then the backup's .htaccess/.user.ini/
-  php.ini/web.config files get `.wpcs-off` (an attacker's .htaccess must not open the backup) ->
-  `finish()`: core items resolved (`details.resolution` `core_reinstalled`, or `removed_with_core`
-  for extra files in wp-admin/wp-includes, plus `core_backup`), the extra files logged
-  (`core_unknown_moved`), manifest rows under wp-admin/ and wp-includes/ dropped and every new core
-  file upserted trusted (`run_id` core), `missing_core` of the last scan recounted, work folder
-  deleted, a quick scan started (trigger `update`).
-- Backups (option `wpcybersec_core_backups`): `restore( $id )` (AJAX `core_restore`) swaps the old
-  core back with the same exchange, check and rollback, forgets the manifest rows of core paths so
-  the next scan judges the old files again, deletes the backup and the replaced clean core, starts a
-  quick scan. `prune()` on `wpcybersec_maintenance`: backups older than `KEEP_DAYS` (7, only folders
-  with their marker) and jobs left for a day. Uninstall with "Delete all data" removes marked
-  backups next to the WordPress folder too.
-- Multisite: network admin only (`Admin::can()`), one core for every site, the loopback goes to the
-  network home. Log events `core_reinstall_started`, `core_package_verified`, `core_reinstalled`,
-  `core_items_resolved`, `core_items_removed`, `core_unknown_moved`, `core_reinstall_failed`,
-  `core_reinstall_rolled_back`, `core_reinstall_cancelled`, `core_restored_previous`,
-  `core_backup_deleted`, `core_maintenance_on`.
+  ISPmanager, Hostinger, SiteGround; SFTP otherwise), upload first, maintenance (the administrator
+  creates `.maintenance`; the plugin does not write it), delete wp-admin, wp-includes and exactly
+  the root files of the checksum list (`root_files()`), keep everything else (what is in the folder
+  is listed), extract, move up, clean up, full scan, then `after_steps()` (passwords, salts,
+  plugins/themes/uploads). Other ways: `ssh_block()` (subshell with `set -e`, refuses without
+  wp-config.php / wp-content, curl, `.sha1` check, unzip or PHP ZipArchive, `.maintenance`, delete
+  exactly the core paths, copy, chown to the owner of wp-content when run as root, clean up) and
+  `wp core verify-checksums` (with the warning against `wp core download --force` on 7.x). Composer:
+  `composer reinstall <package>` instead, no delete steps. Managed hosts: ask the host or use its
+  restore tools. All of this is text for the administrator; the plugin runs none of it.
+- `auto_status()` `{ ok, reason, code }`: refused with the reason for DISALLOW_FILE_MODS, the freeze
+  lock, `wp_is_file_mod_allowed( 'capability_update_core' )` false, a non-standard layout
+  (composer, symlink, custom), a managed host, or `get_filesystem_method()` other than `direct`
+  (code `fs`: WordPress would ask for FTP details, which the plugin never does; the text sends the
+  administrator to Dashboard > Updates, where WordPress asks itself).
+- `reinstall()` (one request; AJAX `core_reinstall` do=run after nonce, `Admin::can()` and
+  `current_user_can( 'update_core' )`, or WP-CLI): `auto_status()`, no running scan, a release
+  version, then `offer( $version, Scanner::package_locale() )`: the object `find_core_update()`
+  returns for exactly this version and locale when its packages are in the release folder of
+  wordpress.org, else the same object built from `RELEASE_URL` (en_US: full and no_content;
+  localized: full only), with `response = 'reinstall'` as `do_core_upgrade( true )` in
+  wp-admin/update-core.php sets it. `Core_Upgrader::upgrade( $offer )` with a
+  `WP_Ajax_Upgrader_Skin` (output buffered) does everything else: download, unpack, its own
+  `.maintenance`, `update_core()` (which skips wp-content and wp-config.php), the database upgrade
+  request, `upgrader_process_complete`. `false` (no filesystem without credentials) and a
+  `WP_Error` become one message, saved (`remember()`) and logged (`core_reinstall_failed`). On
+  success: `Scanner::reset_caches()`, a remembered "no checksums" transient dropped,
+  `close_repaired()` (every open core item whose file verifies as `core`/`match` again is closed
+  with `Store::items_resolve_open( $rel, 'now_trusted' )` and trusted in the manifest; needed
+  because `Install_Gate::process_complete()` re-trusts the core folders at shutdown without
+  closing items), `missing_core` of the last scan recounted, a quick scan started (incremental,
+  trigger `update`), one log entry `core_reinstalled`, the outcome saved in `RESULT_OPTION`
+  (`wpcybersec_core_result`, not autoloaded). Unknown files are counted (`damage().unknown`) and
+  named in the message (`extra_text()`), never touched.
+- core-repair.js: `[data-wpcs-core-start]` -> `confirmDialog()` with the texts on the button
+  (`confirm_text( $damage )`) -> one `core_reinstall` do=run request with the button busy -> the
+  message, the quick scan followed in the progress block, reload. `[data-wpcs-core-dismiss]` ->
+  do=dismiss. No job, no polling of steps.
+- `prune()` on `wpcybersec_maintenance`: forgets an outcome older than a day, and removes what the
+  plugin's own core swap of versions up to 1.1.4 left behind: the work folder named in option
+  `wpcybersec_core_reinstall` and that option, and the backups of a replaced core listed in option
+  `wpcybersec_core_backups` once they are 7 days old (only a folder with its
+  `.wpcybersec-core-backup` marker, inside the data folder or a `.wpcybersec-core-` folder next to
+  the WordPress folder), then that option. Nothing restores them. Uninstall with "Delete all data"
+  removes marked backups next to the WordPress folder too.
+- Multisite: network admin only (`Admin::can()`), one core for every site. Log events
+  `core_reinstalled`, `core_reinstall_failed`, `core_backup_deleted`.
 
 ## Speed and usability contracts
 
@@ -869,7 +945,7 @@ Files: `includes/class-core-repair.php` (`Core_Repair`, service `core_repair`),
   - The guard spool is imported at `init` priority 1 on admin pages (`Guard_Manager::early_import()`, two stats when empty), before the menu counts are built.
 - **ClamAV self-test.** `Scanner::clamav_selftest( $fresh )` scans the EICAR string (built at run time by `Scanner::eicar()`, never stored in a plugin file) with every binary, with a time limit, and stores `{ at, key, error, bins: { path: { ok, error, kind, ms, daemon, flags } } }` in `Scanner::SELFTEST_OPTION` (6 h; refreshed in the background, by Check again and when a ClamAV setting changes). Scans and uploads only read the cached result (`clamav_selftest_cached()`), never wait for a new test. `clamav_plan( $context )` skips failed binaries, uses only clamdscan for whole-site scans, and skips a plain clamscan slower than `SLOW_MS` for uploads someone waits for unless `wpcybersec_clamav_slow_uploads` is on. Turning ClamAV on runs the test first and refuses with the reason.
 - **Guard status.** `Guard_Manager::record_ping()` stores the last live test (`PING_OPTION`); `live_state()` uses it where the current request cannot tell (WP-CLI, cron, built-in server): "Active (confirmed by a live test N minutes ago)". Re-tested at most every 6 hours (`maybe_reping()`). Hardening fix `guard` installs, picks .user.ini or .htaccess, tests and rolls back; fix `guard_files` only writes the guard files. "Write .user.ini" is refused while the bootstrap file is missing (a prepend line to a missing file breaks every request).
-- **Cron advice.** One source: `Sysadmin_Tools` cron recommendation (hourly quick scan, nightly full scan, WordPress cron every 5 minutes; `--quiet --wp`, plus `--url` on multisite). The Environment check, wizard Server step, Settings > Real cron, Hardening steps and Developer instructions all print it.
+- **Cron advice.** One source: `Sysadmin_Tools::cron_jobs()` (with WP-CLI: hourly quick scan, nightly full scan, WordPress cron every 5 minutes, `--path --quiet` plus `--url` on multisite; without WP-CLI: a request for wp-cron.php every minute, which starts the scheduled scans; WP-CLI lines use the full path to wp when it is known). The Environment check, wizard Server step, Settings > Real cron, Hardening steps and Developer instructions all print it.
 - **Upload volume hint.** `Sysadmin_Tools::upload_activity()` (one grouped query, cached 1 h) counts the last 30 days of attachments and the share from non-administrators; above 15 a day the wizard recommends Balanced with `upload_mode = hold_risky`.
 - **Reports.** Items flagged high or critical show the safe action (Deny, Quarantine or Restore) as primary; Allow / Mark safe open `WPCyberSec.confirmDialog()` and the server refuses them without `risk_ok=1` (AJAX `item_action`, `bulk_action`; the no-JS form shows a confirmation page). All confirmations use `confirmDialog()` (native `confirm()` only where `<dialog>` is missing).
   - Image previews: admin-post `wpcybersec_preview` (capability + per-item nonce) streams a held jpeg/png/gif/webp only after `Upload_Gate::image_preview()` verified it (getimagesize and finfo agree, inside the quarantine folder, severity below high, never svg), with nosniff, inline, private cache and a sandbox CSP.

@@ -14,10 +14,11 @@ defined( 'ABSPATH' ) || exit;
  * and never start with a slash. Example: "wp-content/plugins/foo/foo.php".
  *
  * Scan set: a whole-site scan walks the scan root plus the WordPress folders
- * that lie outside it (scan_set()): ABSPATH, WP_CONTENT_DIR, WP_PLUGIN_DIR,
- * WPMU_PLUGIN_DIR and the uploads folder in full, the home folder (WordPress
- * in a subfolder, Bedrock's web/) at its top level only, and a wp-config.php
- * one folder above ABSPATH. Every folder is resolved with realpath() and
+ * that lie outside it (scan_set()): the WordPress folder (wp_root()),
+ * WP_CONTENT_DIR, WP_PLUGIN_DIR, WPMU_PLUGIN_DIR and the uploads folder in
+ * full, the home folder (WordPress in a subfolder, Bedrock's web/) at its top
+ * level only, and a wp-config.php one folder above the WordPress folder.
+ * Every folder is resolved with realpath() and
  * dropped when another folder of the set already covers it, so no file is
  * listed twice. Files outside the scan root keep their absolute path as the
  * manifest key (rel() returns it), which is stable and unique.
@@ -36,11 +37,156 @@ class Paths {
 	/** @var string[]|null config_includes() cache. */
 	private static $loaded = null;
 
+	/** @var string|null wp_root() cache (the folder cannot change during a request). */
+	private static $wp_root = null;
+
+	/** @var string[]|null core_roots() cache: the WordPress folder as defined and resolved. */
+	private static $core_roots = null;
+
 	/** Option: files wp-config.php loaded the last time a request included it. */
 	const LOADED_OPTION = 'wpcybersec_config_includes';
 
 	/** At most this many files loaded by wp-config.php are added to the scan set. */
 	const LOADED_CAP = 300;
+
+	/**
+	 * The WordPress folder: the one that holds wp-load.php, wp-admin/ and
+	 * wp-includes/.
+	 *
+	 * A file integrity scanner cannot work without it. Core files are compared
+	 * with the official checksums of WordPress by their path inside this
+	 * folder, the whole-site scan starts here, and the files the web server and
+	 * WordPress read from it (.htaccess, .user.ini, wp-config.php) are the ones
+	 * an attacker changes first, so the plugin has to name them exactly.
+	 *
+	 * WordPress has no function that returns this folder: get_home_path() is
+	 * the folder of the front page (a different folder when WordPress lives in
+	 * a subfolder) and exists in wp-admin only, and site_url() is an address,
+	 * not a folder. WordPress itself keeps it in one constant, which is read
+	 * here and nowhere else in the plugin; every other class asks this method.
+	 * The only other mentions of the constant are the "direct access" guards at
+	 * the top of each file and the includes of WordPress's own files, written
+	 * the way WordPress documents them.
+	 *
+	 * This is the WordPress folder only. wp-content, plugins, mu-plugins,
+	 * themes, languages and uploads have their own WordPress constant or
+	 * function (WP_CONTENT_DIR, WP_PLUGIN_DIR, WPMU_PLUGIN_DIR,
+	 * get_theme_root(), WP_LANG_DIR, wp_upload_dir()) and are never built from
+	 * this folder plus a name.
+	 *
+	 * Trailing slash rule: the result always ends with one slash, so a name is
+	 * appended directly: Paths::wp_root() . 'wp-admin/'. Callers that need the
+	 * folder without it use untrailingslashit().
+	 *
+	 * @param bool $as_defined True for the value exactly as WordPress defined
+	 *                         it (not normalized). Only for Storage::site_id(),
+	 *                         whose hash must stay the same on servers where
+	 *                         the two forms differ (Windows backslashes).
+	 * @return string Absolute path with forward slashes and a trailing slash.
+	 */
+	public static function wp_root( $as_defined = false ) {
+		$defined = (string) ABSPATH;
+		if ( $as_defined ) {
+			return $defined;
+		}
+		if ( null === self::$wp_root ) {
+			self::$wp_root = trailingslashit( wp_normalize_path( $defined ) );
+		}
+		return self::$wp_root;
+	}
+
+	/**
+	 * Whether a path is inside wp-admin, wp-includes or this plugin's own
+	 * folder. The plugin reads and checks those folders but never creates or
+	 * overwrites a file in them: WordPress's own updater is the only code that
+	 * writes there. What the plugin does do there is move a file out, into
+	 * quarantine (by hand on the Reports page, or the automatic quarantine);
+	 * Quarantine::restore() asks this method and refuses to put such a file
+	 * back.
+	 *
+	 * The WordPress folder is compared as defined and resolved (the document
+	 * root is often a symlink, and WP-CLI may be started with either form in
+	 * --path), and the path as given and resolved; for a file that is not there
+	 * (it was moved away) the nearest folder that exists is resolved.
+	 *
+	 * @param string $abs Absolute path.
+	 * @return bool
+	 */
+	public static function in_core_dir( $abs ) {
+		$abs = wp_normalize_path( (string) $abs );
+		if ( '' === $abs ) {
+			return false;
+		}
+		$forms = array( $abs );
+		$real  = self::resolve_missing( $abs );
+		if ( '' !== $real && $real !== $abs ) {
+			$forms[] = $real;
+		}
+		foreach ( self::core_roots() as $root ) {
+			foreach ( $forms as $form ) {
+				if ( 0 === stripos( $form, $root ) ) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * The folders in_core_dir() answers for, each with a trailing slash:
+	 * wp-admin and wp-includes below the WordPress folder as defined and as
+	 * resolved (realpath; the same two forms as Core_Repair::roots()), and the
+	 * plugin's own folder in both forms. Kept for the request.
+	 *
+	 * @return string[]
+	 */
+	private static function core_roots() {
+		if ( null === self::$core_roots ) {
+			$bases = array( self::wp_root() );
+			$real  = @realpath( self::wp_root() ); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- open_basedir may hide the resolved folder.
+			if ( $real ) {
+				$bases[] = trailingslashit( wp_normalize_path( $real ) );
+			}
+			$roots = array();
+			foreach ( $bases as $base ) {
+				$roots[] = $base . 'wp-admin/';
+				$roots[] = $base . WPINC . '/';
+			}
+			$own     = trailingslashit( wp_normalize_path( WPCYBERSEC_DIR ) );
+			$roots[] = $own;
+			$real    = @realpath( $own ); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- open_basedir may hide the resolved folder.
+			if ( $real ) {
+				$roots[] = trailingslashit( wp_normalize_path( $real ) );
+			}
+			self::$core_roots = array_values( array_unique( $roots ) );
+		}
+		return self::$core_roots;
+	}
+
+	/**
+	 * realpath() that also works for a path that does not exist: the nearest
+	 * folder that exists is resolved and the rest of the path is appended.
+	 *
+	 * @param string $abs Absolute path, forward slashes.
+	 * @return string Resolved path with forward slashes, '' when nothing of it can be resolved.
+	 */
+	private static function resolve_missing( $abs ) {
+		$tail = '';
+		$path = $abs;
+		for ( $i = 0; $i < 64; $i++ ) {
+			$real = @realpath( $path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- a missing path, or one outside open_basedir, is expected here.
+			if ( $real ) {
+				return untrailingslashit( wp_normalize_path( $real ) ) . $tail;
+			}
+			$parent = dirname( $path );
+			if ( $parent === $path || '' === $parent || '.' === $parent ) {
+				break;
+			}
+			$tail = '/' . basename( $path ) . $tail;
+			$path = $parent;
+		}
+		return '';
+	}
 
 	/**
 	 * Folder the scanner walks, with a trailing slash.
@@ -50,10 +196,10 @@ class Paths {
 	public static function scan_root() {
 		$settings = wpcybersec()->settings;
 		$mode     = $settings->get( 'scan_root', 'abspath' );
-		$root     = ABSPATH;
+		$root     = self::wp_root();
 
 		if ( 'parent' === $mode ) {
-			$parent = dirname( untrailingslashit( ABSPATH ) );
+			$parent = dirname( untrailingslashit( self::wp_root() ) );
 			if ( @is_readable( $parent ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
 				$root = $parent;
 			}
@@ -98,10 +244,10 @@ class Paths {
 		// Candidates, most general first, so a folder inside another one of the
 		// set is dropped (WP_PLUGIN_DIR inside WP_CONTENT_DIR, for example).
 		$candidates = array(
-			array( ABSPATH, 'wordpress', '' ),
-			array( defined( 'WP_CONTENT_DIR' ) ? WP_CONTENT_DIR : '', 'content', 'wp-content/' ),
-			array( defined( 'WP_PLUGIN_DIR' ) ? WP_PLUGIN_DIR : '', 'plugins', 'wp-content/plugins/' ),
-			array( defined( 'WPMU_PLUGIN_DIR' ) ? WPMU_PLUGIN_DIR : '', 'mu-plugins', 'wp-content/mu-plugins/' ),
+			array( self::wp_root(), 'wordpress', '' ),
+			array( WP_CONTENT_DIR, 'content', 'wp-content/' ),
+			array( WP_PLUGIN_DIR, 'plugins', 'wp-content/plugins/' ),
+			array( WPMU_PLUGIN_DIR, 'mu-plugins', 'wp-content/mu-plugins/' ),
 			array( self::uploads_basedir(), 'uploads', 'wp-content/uploads/' ),
 		);
 		$full = array( $root );
@@ -132,7 +278,7 @@ class Paths {
 			);
 		}
 
-		// wp-config.php one folder above ABSPATH (WordPress loads it from there).
+		// wp-config.php one folder above the WordPress folder (WordPress loads it from there).
 		$tops = array();
 		foreach ( $set as $entry ) {
 			if ( 'top' === $entry['depth'] ) {
@@ -372,16 +518,16 @@ class Paths {
 	}
 
 	/**
-	 * Folder that serves the site's front page when it is not ABSPATH
-	 * (WordPress in a subfolder, Bedrock's web/). Worked out from the home and
-	 * site URLs like get_home_path(), without $_SERVER (which is wrong under
-	 * cron and the CLI), and confirmed by an index.php that loads
-	 * wp-blog-header.php one folder above ABSPATH.
+	 * Folder that serves the site's front page when it is not the WordPress
+	 * folder (WordPress in a subfolder, Bedrock's web/). Worked out from the
+	 * home and site URLs like get_home_path(), without $_SERVER (which is wrong
+	 * under cron and the CLI), and confirmed by an index.php that loads
+	 * wp-blog-header.php one folder above the WordPress folder.
 	 *
-	 * @return string Real folder with a trailing slash, '' when it is ABSPATH or unknown.
+	 * @return string Real folder with a trailing slash, '' when it is the WordPress folder or unknown.
 	 */
 	public static function home_dir() {
-		$abspath = trailingslashit( wp_normalize_path( ABSPATH ) );
+		$abspath = self::wp_root();
 		$found   = '';
 		if ( function_exists( 'get_option' ) ) {
 			// Multisite: the main site's addresses (a site's path is not a folder).
@@ -450,7 +596,7 @@ class Paths {
 	 * such as Bedrock's config/application.php and Composer's autoloader.
 	 *
 	 * Taken from get_included_files() when this request included wp-config.php
-	 * itself (web, wp-cron.php, bin/cron.php) and remembered in an option, so a
+	 * itself (web, wp-cron.php) and remembered in an option, so a
 	 * request that did not (WP-CLI evaluates wp-config.php instead of including
 	 * it) scans the same files. Without that list, the plain require/include
 	 * lines of wp-config.php are read instead.
@@ -499,7 +645,7 @@ class Paths {
 	 * @return string[]|null Null when this request did not include wp-config.php itself.
 	 */
 	private static function loaded_now( $config ) {
-		$settings = self::real_file( ABSPATH . 'wp-settings.php' );
+		$settings = self::real_file( self::wp_root() . 'wp-settings.php' );
 		$started  = false;
 		$out      = array();
 		foreach ( get_included_files() as $file ) {
@@ -579,7 +725,7 @@ class Paths {
 		if ( 0 === strpos( $abs, $root ) ) {
 			return ltrim( substr( $abs, strlen( $root ) ), '/' );
 		}
-		// The scan lists files by their real folder (a symlinked ABSPATH or
+		// The scan lists files by their real folder (a symlinked WordPress or
 		// uploads folder), so a path given through a link gets the same key.
 		// The file name itself is kept: a symlinked file is listed by its own name.
 		if ( self::is_absolute( $abs ) && false === strpos( $abs, '/../' ) ) {

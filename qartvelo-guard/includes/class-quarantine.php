@@ -84,6 +84,14 @@ class Quarantine {
 		if ( ! Paths::in_scope( $scope ) || Storage::is_within( $dest, wpcybersec()->storage->data_dir() ) ) {
 			return new \WP_Error( 'wpcybersec_q_target', __( 'Refusing to restore a file outside the scanned folders.', 'qartvelo-guard' ) );
 		}
+		// Nothing is written into wp-admin, wp-includes or the plugin's own
+		// folder: an official file comes back with a reinstall (of WordPress
+		// core, or of this plugin), any other file is put back by hand.
+		// When the same file is already there again, nothing is written: the
+		// held copy is removed below and the restore counts as done.
+		if ( Paths::in_core_dir( $dest ) && ! file_exists( $dest ) ) {
+			return self::core_refusal();
+		}
 		if ( file_exists( $dest ) ) {
 			if ( $item['sha256'] && hash_file( 'sha256', $dest ) === $item['sha256'] ) {
 				$this->purge( $item );
@@ -103,6 +111,17 @@ class Quarantine {
 		}
 		Fs::chmod( $dest, 0644 );
 		return true;
+	}
+
+	/**
+	 * Why a held file is not put back into wp-admin, wp-includes or the plugin's own folder, and what to
+	 * do instead. One sentence for restore() and for Decisions::apply(), which
+	 * refuses approve, mark safe and restore for such an item before it gets here.
+	 *
+	 * @return \WP_Error Code wpcybersec_q_core.
+	 */
+	public static function core_refusal() {
+		return new \WP_Error( 'wpcybersec_q_core', __( 'This file was in wp-admin, wp-includes or the Qartvelo Guard folder, and Qartvelo Guard does not write into those folders. A WordPress file comes back when you reinstall WordPress core, a file of this plugin when you install the plugin again. Any other file: download it from quarantine and put it back yourself.', 'qartvelo-guard' ) );
 	}
 
 	/**
@@ -189,7 +208,7 @@ class Quarantine {
 		header( 'Content-Disposition: attachment; filename="' . $name . '"' );
 		header( 'Content-Length: ' . filesize( $src ) );
 		header( 'X-Content-Type-Options: nosniff' );
-		readfile( $src ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		readfile( $src ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_readfile -- streams the raw bytes of the held file as an application/octet-stream attachment (nosniff); a binary download, never rendered as HTML.
 		exit;
 	}
 

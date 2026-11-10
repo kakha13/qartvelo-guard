@@ -1,16 +1,14 @@
 /**
- * Qartvelo Guard - "Reinstall clean core" card (Dashboard, Reports).
+ * Qartvelo Guard - "WordPress core looks damaged" card (Dashboard, Reports).
  *
  * Builds on window.WPCyberSec (core.js):
- *   [data-wpcs-core-start]    AJAX core_reinstall do=start, then do=tick until the package is
- *                             verified (step "ready"), confirmDialog() with the server's summary,
- *                             do=swap (the short request that replaces core), then the quick scan
- *                             the server started is followed and the page reloads.
- *   [data-wpcs-core-resume]   a job that is already running is continued on page load.
- *   [data-wpcs-core-cancel]   do=cancel (only before the swap).
- *   [data-wpcs-core-dismiss]  do=dismiss (hides a finished or failed job's message).
- *   [data-wpcs-core-restore]  AJAX core_restore id=<backup>, after a confirmation.
- *   [data-wpcs-core-maint]    AJAX core_maintenance (writes .maintenance for the steps by hand).
+ *   [data-wpcs-core-start]    confirmDialog() with the texts on the button (data-title,
+ *                             data-verdict, data-text, data-confirm-label), then ONE request:
+ *                             AJAX core_reinstall do=run. WordPress reinstalls its own core in
+ *                             that request (its built-in updater); the button is busy meanwhile.
+ *                             The answer is a message, plus the quick scan the server started,
+ *                             which is followed in the progress block before the page reloads.
+ *   [data-wpcs-core-dismiss]  AJAX core_reinstall do=dismiss (hides the outcome of the last reinstall).
  */
 (function () {
 	'use strict';
@@ -21,79 +19,46 @@
 	}
 	var i18n = (window.wpcybersecCore && window.wpcybersecCore.i18n) || {};
 	var coreI18n = (window.wpcybersecData && window.wpcybersecData.i18n) || {};
+	var generic = coreI18n.error || 'Request failed';
 
-	function t(key, fallback) {
-		return i18n[key] || fallback;
-	}
-
-	function card(el) {
-		return (el && el.closest('[data-wpcs-core]')) || document.querySelector('[data-wpcs-core]');
-	}
-
-	function setProgress(root, state) {
-		var box = root && root.querySelector('[data-wpcs-core-progress]');
-		if (!box) {
-			return;
-		}
-		box.classList.remove('wpcs-hidden');
-		var bar = box.querySelector('.wpcs-progress__bar');
-		var text = box.querySelector('.wpcs-progress__text');
-		if (bar) {
-			bar.style.width = Math.max(0, Math.min(100, parseInt(state.percent, 10) || 0)) + '%';
-		}
-		if (text) {
-			text.textContent = state.label || '';
-		}
-	}
-
-	function fail(root, message, btn) {
-		api.toast(message || coreI18n.error || 'Something went wrong.', true);
-		if (btn) {
-			btn.disabled = false;
-		}
+	function reloadSoon(ms) {
 		window.setTimeout(function () {
 			window.location.reload();
-		}, 2500);
+		}, ms);
 	}
 
-	function call(params) {
-		return api.ajax('core_reinstall', params);
-	}
-
-	/* Ticks until the package is verified, then asks, then swaps. */
-	function drive(root, state, btn) {
-		setProgress(root, state);
-		if (state.step === 'download' || state.step === 'extract' || state.step === 'verify' || state.step === 'finish') {
-			return call({ do: 'tick' }).then(function (next) {
-				return drive(root, next, btn);
-			});
+	function setStatus(root, text, isError) {
+		var el = root && root.querySelector('[data-wpcs-core-status]');
+		if (!el) {
+			return;
 		}
-		if (state.step === 'ready') {
-			var c = state.confirm || {};
-			var text = c.text || '';
-			if (i18n.network) {
-				text += ' ' + i18n.network;
+		el.textContent = text || '';
+		el.classList.toggle('wpcs-hidden', !text);
+		el.classList.toggle('is-error', !!isError);
+	}
+
+	function setBusy(root, btn, busy) {
+		btn.disabled = busy;
+		btn.classList.toggle('is-busy', busy);
+		if (root) {
+			if (busy) {
+				root.setAttribute('aria-busy', 'true');
+			} else {
+				root.removeAttribute('aria-busy');
 			}
-			return api.confirmDialog({ title: c.title, verdict: c.verdict, text: text, confirm: c.confirm, tone: 'danger' }).then(function (ok) {
-				if (!ok) {
-					return call({ do: 'cancel' }).then(function () {
-						api.toast(t('cancelled', 'Cancelled. Nothing was changed.'));
-						window.setTimeout(function () {
-							window.location.reload();
-						}, 1200);
-					});
-				}
-				setProgress(root, { percent: 90, label: t('swapping', 'Replacing core (a few seconds)') });
-				return call({ do: 'swap' }).then(function (next) {
-					return drive(root, next, btn);
-				});
-			});
 		}
-		if (state.step === 'done') {
-			setProgress(root, state);
-			api.toast(state.message || coreI18n.done || 'Done');
-			if (state.scan && api.scan && typeof api.scan.attach === 'function' && [ 'enumerating', 'processing', 'finishing' ].indexOf(state.scan.state) !== -1) {
-				var prog = root && root.querySelector('[data-wpcs-core-progress]');
+	}
+
+	function run(root, btn) {
+		setBusy(root, btn, true);
+		setStatus(root, i18n.working || 'WordPress is reinstalling its core. Keep this page open.', false);
+		api.ajax('core_reinstall', { do: 'run' }).then(function (res) {
+			var message = res.message || coreI18n.done || 'Done';
+			setStatus(root, message, false);
+			api.toast(message);
+			btn.classList.remove('is-busy');
+			var prog = root && root.querySelector('[data-wpcs-core-progress]');
+			if (res.scan && api.scan && typeof api.scan.attach === 'function' && api.scan.isRunning(res.scan)) {
 				return api.scan.attach(function (status) {
 					if (prog) {
 						api.renderProgress(prog, status);
@@ -104,52 +69,38 @@
 					window.location.reload();
 				});
 			}
-			window.setTimeout(function () {
-				window.location.reload();
-			}, 1500);
+			reloadSoon(1500);
 			return null;
-		}
-		if (state.step === 'failed') {
-			fail(root, state.message, btn);
-			return null;
-		}
-		if (state.step === 'swap') {
-			// Another request is swapping right now: look again in a moment.
-			return new Promise(function (resolve) {
-				window.setTimeout(resolve, 3000);
-			}).then(function () {
-				return call({ do: 'status' });
-			}).then(function (next) {
-				return drive(root, next, btn);
-			});
-		}
-		window.location.reload();
-		return null;
+		}).catch(function (err) {
+			var message = (err && err.message) || generic;
+			if (message === generic) {
+				// No JSON came back (a proxy timeout, the maintenance page): the updater may still be running.
+				message = i18n.timeout || message;
+			}
+			setBusy(root, btn, false);
+			setStatus(root, message, true);
+			api.toast(message, true);
+		});
 	}
 
 	document.addEventListener('click', function (e) {
 		var btn = e.target.closest('[data-wpcs-core-start]');
 		if (btn) {
 			e.preventDefault();
-			var root = card(btn);
-			btn.disabled = true;
-			setProgress(root, { percent: 2, label: t('starting', 'Checking the server and downloading the official package') });
-			call({ do: 'start' }).then(function (state) {
-				return drive(root, state, btn);
-			}).catch(function (err) {
-				fail(root, err && err.message, btn);
-			});
-			return;
-		}
-
-		btn = e.target.closest('[data-wpcs-core-cancel]');
-		if (btn) {
-			e.preventDefault();
-			btn.disabled = true;
-			call({ do: 'cancel' }).then(function () {
-				window.location.reload();
-			}).catch(function (err) {
-				fail(null, err && err.message, btn);
+			if (btn.disabled) {
+				return;
+			}
+			var root = btn.closest('[data-wpcs-core]');
+			api.confirmDialog({
+				title: btn.getAttribute('data-title') || btn.textContent.trim(),
+				verdict: btn.getAttribute('data-verdict') || '',
+				text: btn.getAttribute('data-text') || '',
+				confirm: btn.getAttribute('data-confirm-label') || btn.textContent.trim(),
+				tone: 'danger'
+			}).then(function (ok) {
+				if (ok) {
+					run(root, btn);
+				}
 			});
 			return;
 		}
@@ -158,72 +109,15 @@
 		if (btn) {
 			e.preventDefault();
 			btn.disabled = true;
-			call({ do: 'dismiss' }).then(function () {
+			api.ajax('core_reinstall', { do: 'dismiss' }).then(function () {
 				var box = btn.closest('[data-wpcs-core-result]');
 				if (box) {
 					box.parentNode.removeChild(box);
 				}
 			}).catch(function (err) {
-				fail(null, err && err.message, btn);
-			});
-			return;
-		}
-
-		btn = e.target.closest('[data-wpcs-core-restore]');
-		if (btn) {
-			e.preventDefault();
-			api.confirmDialog({
-				title: t('restoreTitle', 'Restore the previous WordPress core?'),
-				text: t('restoreText', ''),
-				confirm: t('restore', 'Restore the previous core'),
-				tone: 'danger'
-			}).then(function (ok) {
-				if (!ok) {
-					return;
-				}
-				btn.disabled = true;
-				api.ajax('core_restore', { id: btn.getAttribute('data-id') }).then(function (res) {
-					api.toast(res.message || coreI18n.done || 'Done');
-					window.setTimeout(function () {
-						window.location.reload();
-					}, 1500);
-				}).catch(function (err) {
-					fail(null, err && err.message, btn);
-				});
-			});
-			return;
-		}
-
-		btn = e.target.closest('[data-wpcs-core-maint]');
-		if (btn) {
-			e.preventDefault();
-			api.confirmDialog({
-				title: t('maintTitle', 'Turn on maintenance mode now?'),
-				text: t('maintText', ''),
-				confirm: t('maintOn', 'Turn on maintenance mode'),
-				tone: 'danger'
-			}).then(function (ok) {
-				if (!ok) {
-					return;
-				}
-				btn.disabled = true;
-				api.ajax('core_maintenance', {}).then(function (res) {
-					api.toast(res.message || '');
-				}).catch(function (err) {
-					api.toast((err && err.message) || coreI18n.error || 'Something went wrong.', true);
-					btn.disabled = false;
-				});
+				btn.disabled = false;
+				api.toast((err && err.message) || generic, true);
 			});
 		}
 	});
-
-	/* A job that was already running when the page loaded. */
-	var resume = document.querySelector('[data-wpcs-core-resume]');
-	if (resume) {
-		call({ do: 'status' }).then(function (state) {
-			return drive(resume, state, null);
-		}).catch(function (err) {
-			fail(resume, err && err.message, null);
-		});
-	}
 })();

@@ -10,6 +10,11 @@ defined( 'WP_UNINSTALL_PLUGIN' ) || exit;
 
 global $wpdb;
 
+// The WordPress folder, exactly as WordPress defines it (it has no function
+// for it; see WPCyberSecurity\Paths::wp_root()). The uninstall also has to work
+// when the plugin's classes cannot be loaded, so this file reads it once, here.
+$wpcybersec_wp_dir = ABSPATH;
+
 /**
  * A plugin option: on multisite a network option (older versions kept them
  * per site, so the main site's copy is the fallback).
@@ -49,14 +54,14 @@ $wpcybersec_root    = is_array( $wpcybersec_uploads ) && empty( $wpcybersec_uplo
 	? untrailingslashit( wp_normalize_path( (string) $wpcybersec_uploads['basedir'] ) ) . '/qartvelo-guard'
 	: '';
 // Whether a folder carries this site's marker file (Storage::write_marker()).
-$wpcybersec_marker_ok = static function ( $dir ) use ( $wpdb ) {
+$wpcybersec_marker_ok = static function ( $dir ) use ( $wpdb, $wpcybersec_wp_dir ) {
 	$file = $dir . '/.wpcybersec-site';
 	if ( ! is_file( $file ) || is_link( $file ) ) {
 		return false;
 	}
 	$text = (string) @file_get_contents( $file, false, null, 0, 1024 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- direct file call: uninstall cannot ask for FTP credentials.
 	// Same id as WPCyberSecurity\Storage::site_id().
-	$id = substr( md5( ABSPATH . $wpdb->base_prefix ), 0, 8 );
+	$id = substr( md5( $wpcybersec_wp_dir . $wpdb->base_prefix ), 0, 8 );
 	return (bool) preg_match( '/^site:\s*' . $id . '\s*$/m', $text );
 };
 $wpcybersec_token   = wpcybersec_uninstall_option( 'wpcybersec_data_token', '' );
@@ -106,7 +111,7 @@ $wpcybersec_delete   = is_array( $wpcybersec_settings ) && ! empty( $wpcybersec_
  * install id are deleted, without waiting for the reply.
  */
 if ( is_array( $wpcybersec_settings ) && ! empty( $wpcybersec_settings['share_stats'] ) && ! ( defined( 'WPCYBERSEC_DISABLE_STATS' ) && WPCYBERSEC_DISABLE_STATS ) ) {
-	require_once __DIR__ . '/qartvelo-guard.php';
+	require_once plugin_dir_path( __FILE__ ) . 'qartvelo-guard.php';
 	if ( class_exists( '\WPCyberSecurity\Stats' ) ) {
 		try {
 			\WPCyberSecurity\Stats::on_uninstall();
@@ -122,7 +127,7 @@ if ( is_array( $wpcybersec_settings ) && ! empty( $wpcybersec_settings['share_st
  * backup in the data folder, which is removed below).
  */
 if ( $wpcybersec_delete ) {
-	require_once __DIR__ . '/qartvelo-guard.php';
+	require_once plugin_dir_path( __FILE__ ) . 'qartvelo-guard.php';
 
 	// Only the define lines the plugin marked ("// Added by Qartvelo Guard on <date>."),
 	// and only when wp-config.php parses before and after. A DISABLE_WP_CRON the plugin
@@ -154,7 +159,7 @@ if ( $wpcybersec_delete ) {
 	// front controller folder), and the PHP block in the uploads .htaccess.
 	$wpcybersec_ini_name = (string) ini_get( 'user_ini.filename' );
 	$wpcybersec_ini_name = '' === $wpcybersec_ini_name ? '.user.ini' : $wpcybersec_ini_name;
-	$wpcybersec_wiring   = array_unique( array_filter( array( trailingslashit( wp_normalize_path( ABSPATH ) ), $wpcybersec_front ) ) );
+	$wpcybersec_wiring   = array_unique( array_filter( array( trailingslashit( wp_normalize_path( $wpcybersec_wp_dir ) ), $wpcybersec_front ) ) );
 	foreach ( $wpcybersec_wiring as $wpcybersec_dir ) {
 		foreach ( array_unique( array( $wpcybersec_ini_name, '.user.ini' ) ) as $wpcybersec_name ) {
 			$wpcybersec_file = $wpcybersec_dir . $wpcybersec_name;
@@ -257,10 +262,10 @@ $wpcybersec_tables = array( 'items', 'manifest', 'allowlist', 'log' );
 function wpcybersec_uninstall_site( $prefix, array $tables, array $hooks ) {
 	global $wpdb;
 	foreach ( $tables as $table ) {
-		$wpdb->query( 'DROP TABLE IF EXISTS ' . $prefix . 'wpcybersec_' . $table ); // phpcs:ignore WordPress.DB, PluginCheck.Security.DirectDB.UnescapedDBParameter -- table names come from the fixed list above.
+		$wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $prefix . 'wpcybersec_' . $table ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.DirectDatabaseQuery.SchemaChange -- the plugin's own tables, removed on uninstall.
 	}
 	$options = $prefix . 'options';
-	$wpdb->query( "DELETE FROM {$options} WHERE option_name LIKE 'wpcybersec\\_%' OR option_name LIKE '\\_transient\\_wpcybersec\\_%' OR option_name LIKE '\\_transient\\_timeout\\_wpcybersec\\_%' OR option_name LIKE '\\_site\\_transient\\_wpcybersec\\_%' OR option_name LIKE '\\_site\\_transient\\_timeout\\_wpcybersec\\_%'" ); // phpcs:ignore WordPress.DB, PluginCheck.Security.DirectDB.UnescapedDBParameter -- core options table of the site.
+	$wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE option_name LIKE %s OR option_name LIKE %s OR option_name LIKE %s OR option_name LIKE %s OR option_name LIKE %s', $options, $wpdb->esc_like( 'wpcybersec_' ) . '%', $wpdb->esc_like( '_transient_wpcybersec_' ) . '%', $wpdb->esc_like( '_transient_timeout_wpcybersec_' ) . '%', $wpdb->esc_like( '_site_transient_wpcybersec_' ) . '%', $wpdb->esc_like( '_site_transient_timeout_wpcybersec_' ) . '%' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- the options table of the site that is being cleaned (also on other sites of a network): every option of the plugin, by prefix.
 	wp_cache_delete( 'alloptions', 'options' );
 	foreach ( $hooks as $hook ) {
 		wp_clear_scheduled_hook( $hook );
@@ -282,7 +287,7 @@ if ( is_multisite() ) {
 		restore_current_blog();
 	}
 	wpcybersec_uninstall_site( $wpdb->base_prefix, $wpcybersec_tables, array() );
-	$wpdb->query( "DELETE FROM {$wpdb->sitemeta} WHERE meta_key LIKE 'wpcybersec\\_%' OR meta_key LIKE '\\_site\\_transient\\_wpcybersec\\_%' OR meta_key LIKE '\\_site\\_transient\\_timeout\\_wpcybersec\\_%'" ); // phpcs:ignore WordPress.DB
+	$wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE meta_key LIKE %s OR meta_key LIKE %s OR meta_key LIKE %s', $wpdb->sitemeta, $wpdb->esc_like( 'wpcybersec_' ) . '%', $wpdb->esc_like( '_site_transient_wpcybersec_' ) . '%', $wpdb->esc_like( '_site_transient_timeout_wpcybersec_' ) . '%' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- core table of the network: every network option and site transient of the plugin, by prefix, on uninstall.
 	wp_cache_flush();
 } else {
 	wpcybersec_uninstall_site( $wpdb->prefix, $wpcybersec_tables, $wpcybersec_hooks );
@@ -347,7 +352,7 @@ if ( '' !== $wpcybersec_root && $wpcybersec_root !== $wpcybersec_default && is_d
 }
 
 /*
- * The guard bootstrap (ABSPATH/wpcybersec-guard.php) is removed only when it is
+ * The guard bootstrap (wpcybersec-guard.php in the WordPress folder) is removed only when it is
  * certain that nothing points auto_prepend_file at it. Deleting it while PHP
  * still prepends it makes every request on the site fail with a fatal error.
  * Left in place it does nothing: it only loads the guard when the plugin's
@@ -357,7 +362,7 @@ if ( '' !== $wpcybersec_root && $wpcybersec_root !== $wpcybersec_default && is_d
  * not see the web server's settings (mod_php .htaccess values, PHP-FPM pool,
  * nginx fastcgi_param, the web php.ini), so ini_get() proves nothing there.
  */
-$wpcybersec_bootstrap = ABSPATH . 'wpcybersec-guard.php';
+$wpcybersec_bootstrap = $wpcybersec_wp_dir . 'wpcybersec-guard.php';
 if ( is_file( $wpcybersec_bootstrap ) && ! is_link( $wpcybersec_bootstrap ) && 'cli' !== PHP_SAPI && ! ( defined( 'WP_CLI' ) && WP_CLI ) ) {
 	$wpcybersec_referenced = false !== strpos( (string) ini_get( 'auto_prepend_file' ), 'wpcybersec-guard.php' );
 
@@ -367,12 +372,12 @@ if ( is_file( $wpcybersec_bootstrap ) && ! is_link( $wpcybersec_bootstrap ) && '
 	$wpcybersec_ini_name = '' === $wpcybersec_ini_name ? '.user.ini' : $wpcybersec_ini_name;
 	$wpcybersec_configs  = array_unique(
 		array(
-			ABSPATH . '.htaccess',
-			ABSPATH . $wpcybersec_ini_name,
-			ABSPATH . '.user.ini',
-			dirname( ABSPATH ) . '/.htaccess',
-			dirname( ABSPATH ) . '/' . $wpcybersec_ini_name,
-			dirname( ABSPATH ) . '/.user.ini',
+			$wpcybersec_wp_dir . '.htaccess',
+			$wpcybersec_wp_dir . $wpcybersec_ini_name,
+			$wpcybersec_wp_dir . '.user.ini',
+			dirname( $wpcybersec_wp_dir ) . '/.htaccess',
+			dirname( $wpcybersec_wp_dir ) . '/' . $wpcybersec_ini_name,
+			dirname( $wpcybersec_wp_dir ) . '/.user.ini',
 		)
 	);
 	if ( '' !== $wpcybersec_front ) {

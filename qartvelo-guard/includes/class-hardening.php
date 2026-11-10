@@ -453,7 +453,7 @@ class Hardening {
 				);
 
 			case 'guard':
-				$boot  = wp_normalize_path( ABSPATH . 'wpcybersec-guard.php' );
+				$boot  = Paths::wp_root() . 'wpcybersec-guard.php';
 				$gm    = wpcybersec()->guard_manager;
 				$front = is_object( $gm ) && method_exists( $gm, 'front_root' ) ? $gm->front_root() : '';
 				$extra = array();
@@ -495,14 +495,13 @@ class Hardening {
 				);
 
 			case 'wp_cron':
-				// The same three jobs as the crontab block (Sysadmin_Tools::cron_jobs()), one panel entry each.
+				// The same jobs as the crontab block (Sysadmin_Tools::cron_jobs()), one panel entry each.
 				$steps = array(
-					array( 'text' => __( 'In your hosting control panel open "Cron Jobs" (cPanel, Plesk "Scheduled Tasks", or your host\'s equivalent) and add these three jobs.', 'qartvelo-guard' ) ),
+					array( 'text' => __( 'In your hosting control panel open "Cron Jobs" (cPanel, Plesk "Scheduled Tasks", or your host\'s equivalent) and add each job below.', 'qartvelo-guard' ) ),
 				);
 				foreach ( Sysadmin_Tools::cron_jobs() as $job ) {
 					$steps[] = array(
-						/* translators: 1: what the job does and when, 2: cron schedule */
-						'text' => sprintf( __( '%1$s. Schedule: %2$s. Command:', 'qartvelo-guard' ), $job['when'], $job['schedule'] ),
+						'text' => Sysadmin_Tools::cron_job_text( $job ),
 						'code' => $job['command'],
 					);
 				}
@@ -932,7 +931,7 @@ class Hardening {
 			return false;
 		}
 		$name = 'htaccess' === $method ? '.htaccess' : (string) ini_get( 'user_ini.filename' );
-		$dirs = method_exists( $gm, 'wiring_dirs' ) ? $gm->wiring_dirs() : array( ABSPATH );
+		$dirs = method_exists( $gm, 'wiring_dirs' ) ? $gm->wiring_dirs() : array( Paths::wp_root() );
 		foreach ( $dirs as $dir ) {
 			if ( ! Fs::is_writable( $dir ) && ! Fs::is_writable( $dir . $name ) ) {
 				return false;
@@ -1344,14 +1343,14 @@ class Hardening {
 			echo '</div>';
 			if ( $steps ) {
 				echo '<details class="wpcs-manual" data-wpcs-manual="' . esc_attr( $auto['id'] ) . '"><summary>' . esc_html( 'guard' === $id ? __( 'Do it by hand', 'qartvelo-guard' ) : __( 'Do it by hand instead', 'qartvelo-guard' ) ) . '</summary>';
-				echo $extra; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped above.
+				echo wp_kses( $extra, Admin\Kses::allowed() );
 				Admin\Settings_Page::render_steps( $steps );
 				echo '</details>';
 			}
 		} elseif ( $steps ) {
 			echo '<div class="wpcs-manual wpcs-manual--open" data-wpcs-manual="' . esc_attr( $id ) . '">';
 			echo '<span class="wpcs-sub wpcs-check__fix">' . esc_html__( 'How to set it up:', 'qartvelo-guard' ) . '</span>';
-			echo $extra; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped above.
+			echo wp_kses( $extra, Admin\Kses::allowed() );
 			Admin\Settings_Page::render_steps( $steps );
 			echo '</div>';
 		}

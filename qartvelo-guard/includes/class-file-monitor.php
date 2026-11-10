@@ -245,10 +245,28 @@ class File_Monitor {
 	 * baseline job (Scan_Job::queue_rebaseline()); until that runs, scans judge
 	 * its new and changed files like a baseline instead of reporting them.
 	 *
-	 * @param array $abs_dirs Absolute folders.
+	 * An update only vouches for the files it delivered, and two kinds of
+	 * folders are copied over, not replaced, so they can hold files the update
+	 * never touched. Those are left as they are for the next scan to judge:
+	 *
+	 *   - in wp-admin and wp-includes, a file that is not part of WordPress
+	 *     (checksums loaded, file not listed): the core updater does not write
+	 *     such files;
+	 *   - in a folder named in $known_only (the languages folder after a core
+	 *     package that carries translations), a file that was not trusted
+	 *     before.
+	 *
+	 * @param array $abs_dirs   Absolute folders.
+	 * @param array $known_only Folders among them where only files that were
+	 *                          trusted before are trusted again.
 	 * @return array { trusted: int, threats: int, skipped: int, queued: int }
 	 */
-	public function rebaseline_paths( array $abs_dirs ) {
+	public function rebaseline_paths( array $abs_dirs, array $known_only = array() ) {
+		$strict_dirs = array();
+		foreach ( $known_only as $known ) {
+			$known_real    = realpath( (string) $known );
+			$strict_dirs[] = untrailingslashit( wp_normalize_path( $known_real ? $known_real : (string) $known ) );
+		}
 		$result  = array( 'trusted' => 0, 'threats' => 0, 'skipped' => 0, 'queued' => 0 );
 		$scanner = wpcybersec()->scanner;
 		$store   = wpcybersec()->store;
@@ -285,6 +303,7 @@ class File_Monitor {
 				continue;
 			}
 
+			$strict  = in_array( untrailingslashit( $dir ), $strict_dirs, true );
 			$upserts = array();
 			foreach ( $files as $abs ) {
 				$rel  = Paths::rel( $abs );
@@ -318,6 +337,21 @@ class File_Monitor {
 					);
 					++$result['threats'];
 					continue;
+				}
+
+				// Not delivered by this update: the next scan judges it (see the method comment).
+				if ( 'match' !== $verify['verdict'] ) {
+					if ( 'core' === $verify['source'] && 'unknown_file' === $verify['reason'] ) {
+						++$result['skipped'];
+						continue;
+					}
+					if ( $strict ) {
+						$row = $store->manifest_get( $rel );
+						if ( ! $row || Store::STATE_TRUSTED !== $row['state'] ) {
+							++$result['skipped'];
+							continue;
+						}
+					}
 				}
 
 				$upserts[] = array(

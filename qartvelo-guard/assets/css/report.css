@@ -1,0 +1,26 @@
+/*
+ * Qartvelo Guard: styles of the downloadable security report (Reports > Download report,
+ * wp wpcybersec report). Site_Report::print_style() puts them into the head of that one file,
+ * so the report stays readable when it is sent to a developer or a host. Light, prints well.
+ */
+body{margin:0;background:#f6f7f9;color:#1e293b;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:24px 16px 48px}
+header{border-bottom:3px solid #0f766e;margin-bottom:16px}.kicker{margin:0;color:#0f766e;font-weight:600;text-transform:uppercase;font-size:12px;letter-spacing:.06em}
+h1{font-size:24px;margin:4px 0 8px;word-break:break-word}h2{font-size:18px;margin:0 0 12px}h3{font-size:14px;margin:16px 0 6px}
+section{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin:16px 0}
+.muted{color:#64748b}.note{background:#fffbeb;border-left:3px solid #d97706;padding:8px 10px}.bad{color:#b91c1c}.nowrap{white-space:nowrap}
+.count{display:inline-block;min-width:20px;padding:0 7px;border-radius:999px;background:#e2e8f0;font-size:12px;text-align:center;vertical-align:middle}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px 16px;margin:0}.kv div{min-width:0}.kv dt{font-size:12px;color:#64748b}.kv dd{margin:0;word-break:break-word}
+table.list{width:100%;border-collapse:collapse;font-size:13px}table.list th,table.list td{text-align:left;vertical-align:top;padding:6px 8px;border-top:1px solid #e2e8f0;overflow-wrap:anywhere}section{overflow-x:auto}table.list th{background:#f8fafc}
+.item{border:1px solid #e2e8f0;border-left:4px solid #94a3b8;border-radius:6px;padding:12px;margin:12px 0}.item.sev-1{border-left-color:#d97706}.item.sev-2{border-left-color:#dc2626}.item.sev-3{border-left-color:#7f1d1d}
+.item-head{margin-bottom:8px}.path{font-weight:600;word-break:break-all}
+.badge{display:inline-block;padding:0 7px;border-radius:4px;font-size:12px;font-weight:600;background:#e2e8f0;color:#334155}.sev-0.badge{background:#e0f2fe;color:#075985}.sev-1.badge{background:#fef3c7;color:#92400e}.sev-2.badge{background:#fee2e2;color:#991b1b}.sev-3.badge{background:#7f1d1d;color:#fff}
+.st{font-weight:600}.st-pass{color:#15803d}.st-warn{color:#b45309}.st-fail{color:#b91c1c}.st-info{color:#0369a1}
+code,pre,table.code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+pre{background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:8px;white-space:pre-wrap;word-break:break-all;margin:6px 0}
+ol.hits{padding-left:20px}ol.hits li{margin:8px 0}
+table.code{width:100%;border-collapse:collapse;table-layout:fixed;border:1px solid #e2e8f0}table.code td{padding:0 6px;vertical-align:top}
+table.code col.n{width:52px}table.code td.n{color:#94a3b8;text-align:right;background:#f8fafc;user-select:none}table.code td.c{white-space:pre-wrap;word-break:break-all}
+table.code tr.add td.c{background:#dcfce7}table.code tr.del td.c{background:#fee2e2}table.code tr.hit td{background:#fef3c7}table.code tr.hunk td{background:#f1f5f9;color:#64748b;text-align:center}
+footer{margin-top:24px;font-size:12px}
+@media print{body{background:#fff}section{border:0;padding:0}.item{break-inside:avoid}}

@@ -181,13 +181,16 @@ class Recent_Changes {
 	 */
 	public function describe( $prefix ) {
 		$abs  = Paths::abs( rtrim( (string) $prefix, '/' ) );
-		$core = untrailingslashit( wp_normalize_path( ABSPATH ) );
+		$core = untrailingslashit( Paths::wp_root() );
 		$roots = array(
 			array( 'plugin', WP_PLUGIN_DIR ),
-			array( 'plugin', WP_CONTENT_DIR . '/plugins' ),
 			array( 'theme', get_theme_root() ),
-			array( 'theme', WP_CONTENT_DIR . '/themes' ),
 		);
+		// Every theme folder WordPress knows (register_theme_directory()).
+		global $wp_theme_directories;
+		foreach ( is_array( $wp_theme_directories ) ? $wp_theme_directories : array() as $dir ) {
+			$roots[] = array( 'theme', $dir );
+		}
 		foreach ( $roots as $entry ) {
 			list( $kind, $root ) = $entry;
 			$root = untrailingslashit( wp_normalize_path( (string) $root ) );
@@ -199,7 +202,7 @@ class Recent_Changes {
 				);
 			}
 		}
-		if ( defined( 'WP_LANG_DIR' ) && 0 === strpos( $abs . '/', untrailingslashit( wp_normalize_path( WP_LANG_DIR ) ) . '/' ) ) {
+		if ( 0 === strpos( $abs . '/', untrailingslashit( wp_normalize_path( WP_LANG_DIR ) ) . '/' ) ) {
 			return array(
 				'kind' => 'translation',
 				'name' => __( 'Translations', 'qartvelo-guard' ),
@@ -225,15 +228,13 @@ class Recent_Changes {
 	private function plugin_name( $slug ) {
 		if ( null === $this->plugin_names ) {
 			$this->plugin_names = array();
-			if ( ! function_exists( 'get_plugins' ) && is_readable( ABSPATH . 'wp-admin/includes/plugin.php' ) ) {
+			if ( ! function_exists( 'get_plugins' ) ) {
 				require_once ABSPATH . 'wp-admin/includes/plugin.php';
 			}
-			if ( function_exists( 'get_plugins' ) ) {
-				foreach ( (array) get_plugins() as $file => $data ) {
-					$folder = false === strpos( $file, '/' ) ? $file : dirname( $file );
-					if ( ! isset( $this->plugin_names[ $folder ] ) && ! empty( $data['Name'] ) ) {
-						$this->plugin_names[ $folder ] = (string) $data['Name'];
-					}
+			foreach ( (array) get_plugins() as $file => $data ) {
+				$folder = false === strpos( $file, '/' ) ? $file : dirname( $file );
+				if ( ! isset( $this->plugin_names[ $folder ] ) && ! empty( $data['Name'] ) ) {
+					$this->plugin_names[ $folder ] = (string) $data['Name'];
 				}
 			}
 		}
@@ -282,15 +283,11 @@ class Recent_Changes {
 		$since = time() - $days * DAY_IN_SECONDS;
 		$table = Store::table( 'manifest' );
 
-		$where  = 'mtime >= %d';
-		$params = array( $since );
-		if ( '' !== (string) $args['search'] ) {
-			$where   .= ' AND path LIKE %s';
-			$params[] = '%' . $wpdb->esc_like( (string) $args['search'] ) . '%';
-		}
-		$params[] = self::SCAN_CAP + 1;
+		// Without a search the switch is 0, which makes the path condition true for every row.
+		$by_search = '' !== (string) $args['search'] ? 1 : 0;
+		$like      = $by_search ? '%' . $wpdb->esc_like( (string) $args['search'] ) . '%' : '';
 		// Uses the mtime index: only the rows of the window are read.
-		$rows   = (array) $wpdb->get_results( $wpdb->prepare( "SELECT path, sha256, size, mtime, state FROM {$table} WHERE {$where} ORDER BY mtime DESC LIMIT %d", $params ), ARRAY_A ); // phpcs:ignore WordPress.DB, PluginCheck.Security.DirectDB.UnescapedDBParameter -- $table is Store::table(): $wpdb->prefix plus a fixed name; $where holds only fixed conditions with placeholders.
+		$rows   = (array) $wpdb->get_results( $wpdb->prepare( 'SELECT path, sha256, size, mtime, state FROM %i WHERE mtime >= %d AND ( %d = 0 OR path LIKE %s ) ORDER BY mtime DESC LIMIT %d', $table, $since, $by_search, $like, self::SCAN_CAP + 1 ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- plugin's own table; no WordPress API covers it.
 		$capped = count( $rows ) > self::SCAN_CAP;
 		if ( $capped ) {
 			array_pop( $rows );

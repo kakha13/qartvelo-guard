@@ -259,10 +259,10 @@ class Upload_Gate {
 	 * @return string Empty temp file, or '' on failure.
 	 */
 	private function temp_file( $name ) {
-		if ( ! function_exists( 'wp_tempnam' ) && is_readable( ABSPATH . 'wp-admin/includes/file.php' ) ) {
+		if ( ! function_exists( 'wp_tempnam' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/file.php';
 		}
-		$tmp = function_exists( 'wp_tempnam' ) ? wp_tempnam( 'wpcs-' . sanitize_file_name( wp_basename( $name ) ) ) : @tempnam( get_temp_dir(), 'wpcs' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		$tmp = wp_tempnam( 'wpcs-' . sanitize_file_name( wp_basename( $name ) ) );
 		return is_string( $tmp ) ? $tmp : '';
 	}
 
@@ -609,16 +609,6 @@ class Upload_Gate {
 			return true;
 		}
 
-		if ( ! function_exists( 'wp_handle_sideload' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/file.php';
-		}
-		if ( ! function_exists( 'media_handle_sideload' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/media.php';
-		}
-		if ( ! function_exists( 'wp_generate_attachment_metadata' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/image.php';
-		}
-
 		$tmp = $plugin->quarantine->to_temp( $item );
 		if ( is_wp_error( $tmp ) ) {
 			return $tmp;
@@ -655,6 +645,17 @@ class Upload_Gate {
 		try {
 			$attachment = $this->with_bypass(
 				static function () use ( $file_array, $post_id, $post_data ) {
+					// These three includes are the block the WordPress documentation gives for
+					// media_handle_sideload() outside wp-admin: it calls into file.php and image.php itself.
+					if ( ! function_exists( 'wp_handle_sideload' ) ) {
+						require_once ABSPATH . 'wp-admin/includes/file.php';
+					}
+					if ( ! function_exists( 'wp_generate_attachment_metadata' ) ) {
+						require_once ABSPATH . 'wp-admin/includes/image.php';
+					}
+					if ( ! function_exists( 'media_handle_sideload' ) ) {
+						require_once ABSPATH . 'wp-admin/includes/media.php';
+					}
 					return media_handle_sideload( $file_array, $post_id, null, $post_data );
 				}
 			);
@@ -1479,14 +1480,10 @@ class Upload_Gate {
 		if ( ! function_exists( 'gzopen' ) ) {
 			return array();
 		}
-		if ( ! class_exists( 'PclZip', false ) ) {
-			$file = ABSPATH . 'wp-admin/includes/class-pclzip.php';
-			if ( ! is_readable( $file ) ) {
-				return array();
-			}
-			require_once $file;
-		}
 		try {
+			if ( ! class_exists( 'PclZip', false ) ) {
+				require_once ABSPATH . 'wp-admin/includes/class-pclzip.php';
+			}
 			$archive = new \PclZip( $zip_path );
 			$list    = $archive->listContent();
 		} catch ( \Throwable $e ) {
@@ -1508,7 +1505,7 @@ class Upload_Gate {
 	 * @return string Request URI, trimmed and sanitized.
 	 */
 	private static function request_uri() {
-		$uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+		$uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
 		return self::cut( $uri, 1000 );
 	}
 

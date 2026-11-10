@@ -979,10 +979,12 @@ class Admin {
 	}
 
 	/**
-	 * @param string $which setup | pending | storage.
+	 * Link that hides a notice (handle_dismiss_notice()).
+	 *
+	 * @param string $which setup | pending | storage (for the current user) | cron_note (for everyone).
 	 * @return string
 	 */
-	private static function dismiss_url( $which ) {
+	public static function dismiss_url( $which ) {
 		return wp_nonce_url(
 			add_query_arg(
 				array(
@@ -1237,7 +1239,7 @@ class Admin {
 		header( 'Cross-Origin-Resource-Policy: same-origin' );
 		header( 'Cache-Control: private, max-age=600' );
 		header( 'Referrer-Policy: no-referrer' );
-		readfile( $preview['path'] ); // phpcs:ignore WordPress.WP.AlternativeFunctions -- streams a verified image from the quarantine folder.
+		readfile( $preview['path'] ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_readfile -- streams the raw bytes of a verified image from the quarantine folder (image content type, nosniff, sandbox CSP); a binary response, never rendered as HTML.
 		exit;
 	}
 
@@ -1366,7 +1368,7 @@ class Admin {
 		$action = '';
 		$ids    = array();
 		$single = isset( $_POST['wpcs_single'] ) ? sanitize_text_field( wp_unslash( $_POST['wpcs_single'] ) ) : '';
-		if ( '' !== $single && preg_match( '/^([a-z_]+):(\d+)$/', $single, $m ) ) { // restore_official has an underscore.
+		if ( '' !== $single && preg_match( '/^([a-z_]+):(\d+)$/', $single, $m ) ) {
 			$action = $m[1];
 			$ids    = array( (int) $m[2] );
 		} else {
@@ -1469,7 +1471,7 @@ class Admin {
 		}
 		$html .= '<p><a class="button button-primary" href="' . esc_url( self::page_url( self::PAGE_REPORTS, array( 'tab' => $tab ) ) ) . '">' . esc_html__( 'Cancel', 'qartvelo-guard' ) . '</a> ';
 		$html .= '<button type="submit" class="button">' . esc_html( $first['confirm'] ) . '</button></p></form>';
-		wp_die( $html, esc_html__( 'Confirm', 'qartvelo-guard' ), array( 'response' => 200 ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built with escaping above.
+		wp_die( wp_kses( $html, Kses::allowed() ), esc_html__( 'Confirm', 'qartvelo-guard' ), array( 'response' => 200 ) );
 	}
 
 	/**
@@ -1499,7 +1501,7 @@ class Admin {
 
 		try {
 			$report = new Site_Report();
-			$html   = $report->build();
+			$parts  = $report->parts();
 		} catch ( \Throwable $e ) {
 			self::debug_log( $e );
 			wp_die( esc_html__( 'The report could not be created. Try again in a moment.', 'qartvelo-guard' ), '', array( 'response' => 500, 'back_link' => true ) );
@@ -1509,10 +1511,14 @@ class Admin {
 		nocache_headers();
 		header( 'Content-Type: text/html; charset=utf-8' );
 		header( 'Content-Disposition: attachment; filename="' . Site_Report::filename() . '"' );
-		header( 'Content-Length: ' . strlen( $html ) );
 		header( 'X-Content-Type-Options: nosniff' );
 		header( 'Cache-Control: no-store, private' );
-		echo $html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built escaped by Site_Report.
+		// The same document as Site_Report::build(), printed piece by piece: the
+		// two HTML parts through wp_kses(), the stylesheet by WordPress itself.
+		echo '<!DOCTYPE html>';
+		echo wp_kses( $parts['head'], Kses::document() );
+		$report->print_style();
+		echo wp_kses( $parts['body'], Kses::document() );
 		exit;
 	}
 
@@ -1545,7 +1551,10 @@ class Admin {
 	}
 
 	/**
-	 * Hides a notice: setup for 3 days, pending until a newer item arrives.
+	 * Hides a notice: setup for 3 days, pending until a newer item arrives,
+	 * storage until its state changes (each for the current user), and the note
+	 * about the removed bin/cron.php for everyone (it is a fact about the
+	 * server's crontab, not a preference: Sysadmin_Tools::cron_removed_note()).
 	 */
 	public function handle_dismiss_notice() {
 		$this->require_cap();
@@ -1566,6 +1575,8 @@ class Admin {
 			if ( is_object( $storage ) && method_exists( $storage, 'status' ) ) {
 				update_user_meta( $user_id, self::META_DISMISS_STORAGE, self::storage_key( $storage->status() ) );
 			}
+		} elseif ( 'cron_note' === $which ) {
+			\WPCyberSecurity\Sysadmin_Tools::clear_cron_removed_note();
 		}
 		$this->redirect_back( admin_url(), array() );
 	}

@@ -36,6 +36,9 @@ class Install_Gate {
 	/** @var string[] Single files to re-trust at shutdown. */
 	private $rebaseline_files = array();
 
+	/** @var string[] Queued folders where only files trusted before are trusted again (File_Monitor::rebaseline_paths()). */
+	private $rebaseline_known = array();
+
 	/** @var string[] "type:slug" held during this request (skip their rebaseline). */
 	private $held_now = array();
 
@@ -409,7 +412,7 @@ class Install_Gate {
 		}
 
 		if ( 'core' === $type ) {
-			$abspath = untrailingslashit( wp_normalize_path( ABSPATH ) );
+			$abspath = untrailingslashit( Paths::wp_root() );
 			$this->add_dir( $abspath . '/wp-admin', $abspath );
 			$this->add_dir( $abspath . '/' . WPINC, $abspath );
 			$root_files = (array) glob( $abspath . '/wp-*.php' );
@@ -421,10 +424,23 @@ class Install_Gate {
 					$this->add_file( $file, $abspath );
 				}
 			}
+			// A localized package also carries wp-content/languages, and WordPress's
+			// updater (update_core()) copies it over the translation files that are
+			// there, on an update and on a reinstall alike. They are judged again like
+			// after a translation update instead of being reported as changed by the
+			// next scan. version.php was just written, so it names the new package.
+			$scanner = wpcybersec()->scanner;
+			if ( $scanner && method_exists( $scanner, 'package_locale' ) && 'en_US' !== $scanner->package_locale() ) {
+				$lang = untrailingslashit( wp_normalize_path( WP_LANG_DIR ) );
+				$this->add_dir( $lang, dirname( $lang ) );
+				// The updater copies over that folder and does not empty it: a file
+				// that was not trusted before did not come from the package.
+				$this->rebaseline_known[] = $lang;
+			}
 			return;
 		}
 
-		if ( 'translation' === $type && defined( 'WP_LANG_DIR' ) ) {
+		if ( 'translation' === $type ) {
 			$lang = untrailingslashit( wp_normalize_path( WP_LANG_DIR ) );
 			$this->add_dir( $lang, dirname( $lang ) );
 		}
@@ -436,8 +452,10 @@ class Install_Gate {
 	public function run_rebaseline() {
 		$dirs  = array_values( array_unique( $this->rebaseline_dirs ) );
 		$files = array_values( array_unique( $this->rebaseline_files ) );
+		$known = array_values( array_unique( $this->rebaseline_known ) );
 		$this->rebaseline_dirs  = array();
 		$this->rebaseline_files = array();
+		$this->rebaseline_known = array();
 		if ( ! $dirs && ! $files ) {
 			return;
 		}
@@ -447,15 +465,12 @@ class Install_Gate {
 		if ( ! $monitor ) {
 			return;
 		}
-		ignore_user_abort( true );
-		if ( function_exists( 'set_time_limit' ) ) {
-			@set_time_limit( 300 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors, Squiz.PHP.DiscouragedFunctions.Discouraged -- hashing and copying a whole plugin or theme package into quarantine can take minutes.
-		}
+		ignore_user_abort( true ); // Hashing and copying a whole plugin or theme package can take a while: finish it even when the browser gives up.
 
 		$done = array();
 		try {
 			if ( $dirs && method_exists( $monitor, 'rebaseline_paths' ) ) {
-				$monitor->rebaseline_paths( $dirs );
+				$monitor->rebaseline_paths( $dirs, $known );
 				$done = $dirs;
 			}
 			$trusted = $files ? $this->rebaseline_files( $files ) : 0;
@@ -884,7 +899,7 @@ class Install_Gate {
 			$pairs[] = array( (string) $wp_filesystem->wp_plugins_dir(), WP_PLUGIN_DIR );
 		}
 		if ( method_exists( $wp_filesystem, 'abspath' ) ) {
-			$pairs[] = array( (string) $wp_filesystem->abspath(), ABSPATH );
+			$pairs[] = array( (string) $wp_filesystem->abspath(), Paths::wp_root() );
 		}
 		foreach ( $pairs as $pair ) {
 			$remote = trailingslashit( wp_normalize_path( $pair[0] ) );
@@ -1081,7 +1096,7 @@ class Install_Gate {
 	private function discard_working_dir( $remote_source ) {
 		$fs_path     = untrailingslashit( wp_normalize_path( (string) $remote_source ) );
 		$local       = untrailingslashit( self::local_path( $fs_path ) );
-		$upgrade_dir = wp_normalize_path( WP_CONTENT_DIR . '/upgrade' );
+		$upgrade_dir = trailingslashit( wp_normalize_path( WP_CONTENT_DIR ) ) . 'upgrade';
 		if ( '' === $fs_path || '' === $local || ! is_dir( $local ) || ! is_dir( $upgrade_dir ) ) {
 			return;
 		}
@@ -1163,7 +1178,7 @@ class Install_Gate {
 	 * @return string
 	 */
 	private static function request_uri() {
-		$uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+		$uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
 		return Upload_Gate::cut( $uri, 1000 );
 	}
 

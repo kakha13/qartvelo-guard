@@ -2435,6 +2435,41 @@ class Diff {
 			$found
 		);
 
+		// define( 'DB_PASSWORD', 'value' ) that is not live PHP code: a commented
+		// out statement (old credentials left in wp-config.php) or a text copy of
+		// a configuration file. Live code was handled by the PHP reading above (its
+		// values are the mask already and stay as they are). Every literal of the
+		// value is hidden up to the bracket that closes the define or the end of
+		// the statement, also when it continues on the next lines: a value put
+		// together from parts, or a fallback after a function call. A JavaScript
+		// module definition (define( "name", [ ... ], function ...)) is not one.
+		$quoted = '"(?:[^"\\\\]++|\\\\.)*+"|\'(?:[^\'\\\\]++|\\\\.)*+\'';
+		$text   = self::replace_safe(
+			'/(\bdefine\s*+\(\s*+)(["\'])([A-Za-z_][A-Za-z0-9_]{0,100}+)\2(\s*+,)((?:[^"\'();]++|' . $quoted . '|(\((?:[^"\'()]++|' . $quoted . '|(?6))*+\)))*+)/is',
+			static function ( $m ) use ( &$found, $quoted ) {
+				if ( ! preg_match( self::CONST_PATTERN, $m[3] ) || preg_match( '/^\s*+(?:\[|function\b)/i', $m[5] ) ) {
+					return $m[0];
+				}
+				$name  = $m[3];
+				$value = preg_replace_callback(
+					'/' . $quoted . '/s',
+					static function ( $q ) use ( &$found, $name ) {
+						$inner = (string) substr( $q[0], 1, -1 );
+						if ( '' === $inner || self::MASK === $inner ) {
+							return $q[0];
+						}
+						self::remember( $found, $name, $inner );
+						return $q[0][0] . self::MASK . str_repeat( "\n", substr_count( $inner, "\n" ) ) . $q[0][0];
+					},
+					$m[5]
+				);
+				// Fail closed: a value that could not be read is hidden as a whole.
+				return $m[1] . $m[2] . $m[3] . $m[2] . $m[4] . ( is_string( $value ) ? $value : ' ' . self::MASK );
+			},
+			$text,
+			$found
+		);
+
 		return self::redact_formats( $text, $found );
 	}
 
@@ -2628,33 +2663,18 @@ class Diff {
 	}
 
 	/**
-	 * Loads core's Text_Diff (no WordPress renderer is needed).
-	 *
-	 * @return bool
-	 */
-	private static function load_engine() {
-		if ( class_exists( 'Text_Diff', false ) ) {
-			return true;
-		}
-		$file = ABSPATH . ( defined( 'WPINC' ) ? WPINC : 'wp-includes' ) . '/Text/Diff.php';
-		if ( is_readable( $file ) ) {
-			require_once $file;
-		}
-		return class_exists( 'Text_Diff', false );
-	}
-
-	/**
-	 * Line edits from $old to $new.
+	 * Line edits from $old to $new, with core's Text_Diff (no WordPress
+	 * renderer is needed).
 	 *
 	 * @param string[] $old Old lines.
 	 * @param string[] $new New lines.
 	 * @return array|null Text_Diff_Op objects.
 	 */
 	private static function compute( array $old, array $new ) {
-		if ( ! self::load_engine() ) {
-			return null;
-		}
 		try {
+			if ( ! class_exists( 'Text_Diff', false ) ) {
+				require_once ABSPATH . WPINC . '/Text/Diff.php';
+			}
 			$diff = new \Text_Diff( 'auto', array( $old, $new ) );
 			return (array) $diff->getDiff();
 		} catch ( \Throwable $e ) {

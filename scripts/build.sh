@@ -116,7 +116,7 @@ LIST="$(unzip -Z1 "$ZIP")"
 TOPS="$(printf '%s\n' "$LIST" | cut -d/ -f1 | sort -u)"
 [ "$TOPS" = "$SLUG" ] || fail "zip must contain only the $SLUG/ folder (found: $TOPS)"
 ok "single top folder $SLUG/"
-for must in "$SLUG/$SLUG.php" "$SLUG/readme.txt" "$SLUG/uninstall.php" "$SLUG/checksums.json" "$SLUG/guard/guard.php" "$SLUG/bin/cron.php"; do
+for must in "$SLUG/$SLUG.php" "$SLUG/readme.txt" "$SLUG/uninstall.php" "$SLUG/checksums.json" "$SLUG/guard/guard.php"; do
 	printf '%s\n' "$LIST" | grep -qx "$must" || fail "missing from zip: $must"
 done
 ok "required files present"

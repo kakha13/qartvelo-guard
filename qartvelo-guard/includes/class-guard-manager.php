@@ -16,7 +16,7 @@ defined( 'ABSPATH' ) || exit;
  * server type, and imports what it held (the spool) into pending items.
  *
  * Files:
- *   ABSPATH/wpcybersec-guard.php      bootstrap that auto_prepend_file points to
+ *   <WordPress>/wpcybersec-guard.php  bootstrap that auto_prepend_file points to
  *   <data>/guard/config.php           config (Guard_Config)
  *   <data>/guard/allow.php            approved hashes (Allowlist::export_guard_file)
  *   <data>/quarantine/guard/YYYY/MM/  held copies (named by content)
@@ -229,7 +229,7 @@ class Guard_Manager {
 	 * @return string Absolute path of the bootstrap file.
 	 */
 	public function bootstrap_path() {
-		return wp_normalize_path( ABSPATH . self::BOOTSTRAP_FILE );
+		return Paths::wp_root() . self::BOOTSTRAP_FILE;
 	}
 
 	/**
@@ -267,7 +267,7 @@ class Guard_Manager {
 	 */
 	public function config_array() {
 		$settings = wpcybersec()->settings;
-		$root     = realpath( ABSPATH );
+		$root     = realpath( Paths::wp_root() );
 		$exempt   = array_values( array_filter( array_map( 'strval', (array) $settings->get( 'guard_exempt', array() ) ), 'strlen' ) );
 
 		/**
@@ -324,7 +324,7 @@ class Guard_Manager {
 			'login_cookie'         => defined( 'LOGGED_IN_COOKIE' ) ? (string) LOGGED_IN_COOKIE : '',
 			'message'              => __( 'This upload is waiting for administrator approval (Qartvelo Guard). After approval, send it again and it will go through.', 'qartvelo-guard' ),
 			'message_refused'      => __( 'This upload was refused because it could not be checked (Qartvelo Guard). Please contact the site administrator.', 'qartvelo-guard' ),
-			'root'                 => trailingslashit( wp_normalize_path( $root ? $root : ABSPATH ) ),
+			'root'                 => trailingslashit( wp_normalize_path( $root ? $root : Paths::wp_root() ) ),
 			// Folder of the front controller index.php when it is not the WordPress
 			// folder (WordPress in a sub folder, Bedrock): REST routes run there.
 			'front_root'           => $this->front_root(),
@@ -340,7 +340,7 @@ class Guard_Manager {
 	 * must be wired in there too, or requests to the front controller (pages,
 	 * REST uploads through /wp-json/) run without it.
 	 *
-	 * @return string Real path with a trailing slash, or '' when it is ABSPATH.
+	 * @return string Real path with a trailing slash, or '' when it is the WordPress folder.
 	 */
 	public function front_root() {
 		static $cache = null;
@@ -359,8 +359,8 @@ class Guard_Manager {
 	 */
 	public function find_front_root() {
 		$cache    = '';
-		$real_abs = realpath( ABSPATH );
-		$abs      = trailingslashit( wp_normalize_path( $real_abs ? $real_abs : ABSPATH ) );
+		$real_abs = realpath( Paths::wp_root() );
+		$abs      = trailingslashit( wp_normalize_path( $real_abs ? $real_abs : Paths::wp_root() ) );
 
 		$candidates = array();
 		// Site address path is a prefix of the WordPress address path: the
@@ -429,7 +429,7 @@ class Guard_Manager {
 	 * @return string[] With trailing slashes.
 	 */
 	public function wiring_dirs() {
-		$dirs  = array( trailingslashit( wp_normalize_path( ABSPATH ) ) );
+		$dirs  = array( Paths::wp_root() );
 		$front = $this->front_root();
 		if ( '' !== $front ) {
 			$dirs[] = $front;
@@ -527,8 +527,9 @@ class Guard_Manager {
 				return $dir;
 			}
 		}
-		// CyberPanel: the site user's home holds public_html.
-		if ( preg_match( '#^(/home/[^/]+)/public_html/#', wp_normalize_path( ABSPATH ), $m ) ) {
+		// CyberPanel: the site user's home holds public_html. This only reads the
+		// shape of the WordPress folder's path; no path is built from the name.
+		if ( preg_match( '#^(/home/[^/]+)/public_html/#', Paths::wp_root(), $m ) ) {
 			return $m[1];
 		}
 		return '';
@@ -947,7 +948,7 @@ class Guard_Manager {
 		$bootstrap = $this->bootstrap_path();
 		$ini_name  = ini_get( 'user_ini.filename' );
 		$ini_name  = false === $ini_name ? '.user.ini' : (string) $ini_name;
-		$ini_path  = '' !== $ini_name ? wp_normalize_path( ABSPATH . $ini_name ) : '';
+		$ini_path  = '' !== $ini_name ? wp_normalize_path( Paths::wp_root() . $ini_name ) : '';
 
 		$help    = '';
 		$snippet = '';
@@ -1377,15 +1378,15 @@ class Guard_Manager {
 		if ( ! is_file( $file ) ) {
 			return true;
 		}
-		if ( ! function_exists( 'insert_with_markers' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/misc.php';
-		}
 		$legacy = self::drop_legacy_htaccess_block( $file );
 		if ( is_wp_error( $legacy ) ) {
 			return $legacy;
 		}
 		if ( false === strpos( (string) @file_get_contents( $file ), '# BEGIN ' . self::MARKER ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- local file.
 			return true;
+		}
+		if ( ! function_exists( 'insert_with_markers' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/misc.php';
 		}
 		if ( ! insert_with_markers( $file, self::MARKER, array() ) ) {
 			/* translators: %s: file path */
@@ -1472,7 +1473,7 @@ class Guard_Manager {
 			return '';
 		}
 		$own = array();
-		foreach ( array( ABSPATH, dirname( ABSPATH ), Paths::home_dir() ) as $dir ) {
+		foreach ( array( Paths::wp_root(), dirname( Paths::wp_root() ), Paths::home_dir() ) as $dir ) {
 			$dir = untrailingslashit( wp_normalize_path( (string) $dir ) );
 			if ( '' !== $dir ) {
 				$own[] = $dir;
@@ -1493,8 +1494,9 @@ class Guard_Manager {
 			}
 			$dir = dirname( $dir );
 		}
-		// Cannot look there (open_basedir): compare the account folders of hosting layouts like /home/<site>/.
-		if ( preg_match( '#^(/home\d*/[^/]+)/#', $path, $theirs ) && preg_match( '#^(/home\d*/[^/]+)/#', wp_normalize_path( ABSPATH ), $ours ) && $theirs[1] !== $ours[1] ) {
+		// Cannot look there (open_basedir): compare the account folders of hosting layouts like /home/<site>/
+		// (reads the shape of the two paths only).
+		if ( preg_match( '#^(/home\d*/[^/]+)/#', $path, $theirs ) && preg_match( '#^(/home\d*/[^/]+)/#', Paths::wp_root(), $ours ) && $theirs[1] !== $ours[1] ) {
 			return $theirs[1];
 		}
 		return '';
@@ -1587,7 +1589,8 @@ class Guard_Manager {
 		}
 		$ini_name = ini_get( 'user_ini.filename' );
 		$ini_name = false === $ini_name || '' === $ini_name ? '.user.ini' : (string) $ini_name;
-		$files = array( ABSPATH . $ini_name, ABSPATH . '.htaccess', dirname( ABSPATH ) . '/' . $ini_name, dirname( ABSPATH ) . '/.htaccess' );
+		$root     = Paths::wp_root();
+		$files    = array( $root . $ini_name, $root . '.htaccess', dirname( $root ) . '/' . $ini_name, dirname( $root ) . '/.htaccess' );
 		foreach ( $this->wiring_dirs() as $dir ) {
 			$files[] = $dir . $ini_name;
 			$files[] = $dir . '.htaccess';

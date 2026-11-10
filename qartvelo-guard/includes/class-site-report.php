@@ -42,6 +42,9 @@ class Site_Report {
 	/** Replacement for hidden values. */
 	const MASK = '********';
 
+	/** First line of the report file. */
+	const DOCTYPE = '<!DOCTYPE html>';
+
 	/** @var string[] Known secret values (longest first) for the final pass. */
 	private $secrets = array();
 
@@ -92,14 +95,27 @@ class Site_Report {
 	}
 
 	/**
-	 * The whole report.
+	 * The whole report as one string (the WP-CLI command writes it to a file).
+	 * The same pieces, in the same order, as the browser download sends:
+	 * the doctype, parts()['head'], the stylesheet, parts()['body'].
 	 *
 	 * @return string HTML document.
 	 */
 	public function build() {
-		if ( function_exists( 'set_time_limit' ) ) {
-			@set_time_limit( 300 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors, Squiz.PHP.DiscouragedFunctions.Discouraged -- the report reads the whole scan history and file tables; large sites need more than 30 seconds.
-		}
+		$parts = $this->parts();
+		return self::DOCTYPE . $parts['head'] . $this->style_tag() . $parts['body'];
+	}
+
+	/**
+	 * The report in the two pieces around its stylesheet, so the download
+	 * handler can print each one through wp_kses() and let WordPress print
+	 * the stylesheet in between (print_style()).
+	 *
+	 * @return array { head: string, body: string } 'head' opens the document
+	 *               up to the title; 'body' runs from the end of the head to
+	 *               the end of the document.
+	 */
+	public function parts() {
 		$this->collect_secrets();
 
 		$plugin  = wpcybersec();
@@ -112,9 +128,11 @@ class Site_Report {
 		$last    = (array) $plugin->scan_job->last_result();
 		$baseline = (int) Network::get_option( 'wpcybersec_baseline_at', 0 );
 
-		$html  = '<!DOCTYPE html><html lang="' . esc_attr( str_replace( '_', '-', get_locale() ) ) . '"><head><meta charset="utf-8">';
-		$html .= '<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">';
-		$html .= '<title>' . $this->t( $title ) . '</title><style>' . $this->css() . '</style></head><body><main>';
+		$head  = '<html lang="' . esc_attr( str_replace( '_', '-', get_locale() ) ) . '"><head><meta charset="utf-8">';
+		$head .= '<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">';
+		$head .= '<title>' . $this->t( $title ) . '</title>';
+
+		$html = '</head><body><main>';
 
 		$html .= '<header><p class="kicker">Qartvelo Guard</p><h1>' . $this->t( $title ) . '</h1>';
 		$html .= '<p class="muted">' . $this->t(
@@ -143,7 +161,10 @@ class Site_Report {
 		) . '</footer>';
 		$html .= '</main></body></html>';
 
-		return $this->scrub( $html );
+		return array(
+			'head' => $this->scrub( $head ),
+			'body' => $this->scrub( $html ),
+		);
 	}
 
 	/* ------------------------------------------------------------------ */
@@ -279,7 +300,7 @@ class Site_Report {
 
 	/**
 	 * The core reinstall suggestion (Core_Repair) when the core looks damaged:
-	 * counts, the one-click option and every step by hand.
+	 * counts, the reinstall by WordPress's own updater and every step by hand.
 	 *
 	 * @return string
 	 */
@@ -313,16 +334,22 @@ class Site_Report {
 			)
 		);
 		$html .= '<p>' . $this->t(
-			sprintf(
-				/* translators: %s: WordPress version */
-				__( 'Recommended: replace the whole WordPress core with a clean copy of version %s instead of reviewing these files one by one. wp-config.php, wp-content, .htaccess and the other files that were added stay as they are.', 'qartvelo-guard' ),
-				$damage['version']
-			)
+			Core_Repair::is_localized()
+				? sprintf(
+					/* translators: %s: WordPress version */
+					__( 'Recommended: reinstall WordPress core, which restores every core file from the official package of version %s, instead of reviewing changed core files one by one. wp-config.php, .htaccess, plugins, themes, uploads and the other files that were added are not touched. Files in wp-admin or wp-includes that are not part of WordPress are not removed by a reinstall: review them in Reports.', 'qartvelo-guard' ),
+					$damage['version']
+				) . ' ' . Core_Repair::languages_text()
+				: sprintf(
+					/* translators: %s: WordPress version */
+					__( 'Recommended: reinstall WordPress core, which restores every core file from the official package of version %s, instead of reviewing changed core files one by one. wp-config.php, wp-content, .htaccess and the other files that were added stay as they are. Files in wp-admin or wp-includes that are not part of WordPress are not removed by a reinstall: review them in Reports.', 'qartvelo-guard' ),
+					$damage['version']
+				)
 		) . '</p>';
 		$html .= '<p>' . $this->t(
 			$auto['ok']
-				? __( 'One click: Dashboard > "Reinstall clean core for me" downloads and verifies the official package, swaps core with maintenance mode on and puts the old core back by itself if the site does not answer.', 'qartvelo-guard' )
-				: __( 'The one-click reinstall is not available on this site:', 'qartvelo-guard' ) . ' ' . $auto['reason']
+				? __( 'From the plugin: Dashboard > "Reinstall WordPress core" starts the updater that is built into WordPress (the same as Dashboard > Updates > Re-install): WordPress downloads its official package and overwrites its own files.', 'qartvelo-guard' )
+				: __( 'Starting the reinstall from the plugin is not available on this site:', 'qartvelo-guard' ) . ' ' . $auto['reason']
 		) . '</p>';
 		$html .= '<p><strong>' . $this->t( __( 'By hand:', 'qartvelo-guard' ) ) . '</strong></p><ol>';
 		foreach ( $steps as $step ) {
@@ -852,31 +879,37 @@ class Site_Report {
 	}
 
 	/**
-	 * Inline styles (light, readable, prints well).
-	 *
-	 * @return string
+	 * Prints the style block of the report: assets/css/report.css, through the
+	 * WordPress style API (an inline style on a handle without a file), so the
+	 * report stays one self-contained file. The handle is removed again: it
+	 * must not reach the admin page that offers the download.
+	 * Works in a web request and under WP-CLI. Prints nothing when the
+	 * stylesheet cannot be read.
 	 */
-	private function css() {
-		return 'body{margin:0;background:#f6f7f9;color:#1e293b;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}'
-			. 'main{max-width:1100px;margin:0 auto;padding:24px 16px 48px}'
-			. 'header{border-bottom:3px solid #0f766e;margin-bottom:16px}.kicker{margin:0;color:#0f766e;font-weight:600;text-transform:uppercase;font-size:12px;letter-spacing:.06em}'
-			. 'h1{font-size:24px;margin:4px 0 8px;word-break:break-word}h2{font-size:18px;margin:0 0 12px}h3{font-size:14px;margin:16px 0 6px}'
-			. 'section{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin:16px 0}'
-			. '.muted{color:#64748b}.note{background:#fffbeb;border-left:3px solid #d97706;padding:8px 10px}.bad{color:#b91c1c}.nowrap{white-space:nowrap}'
-			. '.count{display:inline-block;min-width:20px;padding:0 7px;border-radius:999px;background:#e2e8f0;font-size:12px;text-align:center;vertical-align:middle}'
-			. '.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px 16px;margin:0}.kv div{min-width:0}.kv dt{font-size:12px;color:#64748b}.kv dd{margin:0;word-break:break-word}'
-			. 'table.list{width:100%;border-collapse:collapse;font-size:13px}table.list th,table.list td{text-align:left;vertical-align:top;padding:6px 8px;border-top:1px solid #e2e8f0;overflow-wrap:anywhere}section{overflow-x:auto}table.list th{background:#f8fafc}'
-			. '.item{border:1px solid #e2e8f0;border-left:4px solid #94a3b8;border-radius:6px;padding:12px;margin:12px 0}.item.sev-1{border-left-color:#d97706}.item.sev-2{border-left-color:#dc2626}.item.sev-3{border-left-color:#7f1d1d}'
-			. '.item-head{margin-bottom:8px}.path{font-weight:600;word-break:break-all}'
-			. '.badge{display:inline-block;padding:0 7px;border-radius:4px;font-size:12px;font-weight:600;background:#e2e8f0;color:#334155}.sev-0.badge{background:#e0f2fe;color:#075985}.sev-1.badge{background:#fef3c7;color:#92400e}.sev-2.badge{background:#fee2e2;color:#991b1b}.sev-3.badge{background:#7f1d1d;color:#fff}'
-			. '.st{font-weight:600}.st-pass{color:#15803d}.st-warn{color:#b45309}.st-fail{color:#b91c1c}.st-info{color:#0369a1}'
-			. 'code,pre,table.code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}'
-			. 'pre{background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:8px;white-space:pre-wrap;word-break:break-all;margin:6px 0}'
-			. 'ol.hits{padding-left:20px}ol.hits li{margin:8px 0}'
-			. 'table.code{width:100%;border-collapse:collapse;table-layout:fixed;border:1px solid #e2e8f0}table.code td{padding:0 6px;vertical-align:top}'
-			. 'table.code col.n{width:52px}table.code td.n{color:#94a3b8;text-align:right;background:#f8fafc;user-select:none}table.code td.c{white-space:pre-wrap;word-break:break-all}'
-			. 'table.code tr.add td.c{background:#dcfce7}table.code tr.del td.c{background:#fee2e2}table.code tr.hit td{background:#fef3c7}table.code tr.hunk td{background:#f1f5f9;color:#64748b;text-align:center}'
-			. 'footer{margin-top:24px;font-size:12px}'
-			. '@media print{body{background:#fff}section{border:0;padding:0}.item{break-inside:avoid}}';
+	public function print_style() {
+		$file = WPCYBERSEC_DIR . 'assets/css/report.css';
+		$css  = is_readable( $file ) ? (string) file_get_contents( $file ) : ''; // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- a stylesheet of the plugin itself, read from disk.
+		if ( '' === trim( $css ) ) {
+			return;
+		}
+		$handle = 'wpcybersec-report';
+		wp_register_style( $handle, false, array(), WPCYBERSEC_VERSION );
+		wp_add_inline_style( $handle, $css );
+		wp_print_styles( $handle );
+		wp_deregister_style( $handle );
+		// Printed handles are remembered: forget this one, so a second report of the same request gets its styles too.
+		$styles       = wp_styles();
+		$styles->done = array_values( array_diff( $styles->done, array( $handle ) ) );
+	}
+
+	/**
+	 * print_style() captured as a string, for build().
+	 *
+	 * @return string Markup for the document head ('' when the stylesheet cannot be read).
+	 */
+	private function style_tag() {
+		ob_start();
+		$this->print_style();
+		return (string) ob_get_clean();
 	}
 }

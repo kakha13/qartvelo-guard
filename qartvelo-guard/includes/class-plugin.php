@@ -181,6 +181,9 @@ final class Plugin {
 
 		if ( defined( 'WP_CLI' ) && WP_CLI && class_exists( '\WP_CLI' ) ) {
 			Cli::register();
+		} elseif ( wp_doing_cron() ) {
+			// wp-cron.php requested by a cron job on the server: proof that real cron runs.
+			Sysadmin_Tools::record_wp_cron_request();
 		}
 
 		/**

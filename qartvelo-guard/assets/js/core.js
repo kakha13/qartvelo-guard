@@ -554,6 +554,10 @@
 							var allowed = (res.available || []).indexOf(b.getAttribute('data-wpcs-action')) !== -1;
 							b.classList.toggle('wpcs-hidden', !allowed);
 						});
+						// The "Reinstall WordPress core" link of a changed core file: decided now.
+						actions.querySelectorAll('[data-wpcs-core-link]').forEach(function (a) {
+							a.classList.add('wpcs-hidden');
+						});
 					}
 				}
 				// Extra instructions from the server (for example "upload the ZIP again") win over the generic text.

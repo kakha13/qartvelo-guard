@@ -7,6 +7,7 @@
 
 namespace WPCyberSecurity\Admin;
 
+use WPCyberSecurity\Core_Repair;
 use WPCyberSecurity\Db_Scanner;
 use WPCyberSecurity\Decisions;
 use WPCyberSecurity\Diff;
@@ -49,6 +50,9 @@ class Reports_Page {
 
 	/** @var array Extra filters (severity, type, kind, event). */
 	private $filters = array();
+
+	/** @var bool Whether the core damage card (id wpcs-core-card) is on this page. */
+	private $core_card = false;
 
 	/**
 	 * Tabs: key => { label, icon, count (Store::counts key or '') }.
@@ -369,8 +373,6 @@ class Reports_Page {
 			'restore'    => array( __( 'Restore', 'qartvelo-guard' ), 'undo', '' ),
 			'deny'       => array( __( 'Deny', 'qartvelo-guard' ), 'no-alt', '' ),
 			'delete'     => array( __( 'Delete', 'qartvelo-guard' ), 'trash', 'wpcs-btn-danger' ),
-			// Critical core files only (Decisions::official_source()).
-			'restore_official' => array( __( 'Restore official file', 'qartvelo-guard' ), 'backup', '' ),
 		);
 	}
 
@@ -379,7 +381,7 @@ class Reports_Page {
 	 */
 	private function render_items_tab() {
 		if ( in_array( $this->tab, array( 'pending', 'threats' ), true ) && '' === $this->search && ! $this->filters['type'] && ! $this->filters['severity'] ) {
-			Core_Repair_Card::render( 'reports' );
+			$this->core_card = Core_Repair_Card::render( 'reports' );
 		}
 		$this->render_tab_intro();
 
@@ -597,7 +599,10 @@ class Reports_Page {
 		if ( ! $available ) {
 			$classes[] = 'is-done';
 		}
-		echo '<tr class="' . esc_attr( implode( ' ', $classes ) ) . '" data-item-id="' . esc_attr( (string) $id ) . '" data-type="' . esc_attr( $type ) . '" data-held="' . ( $held ? '1' : '0' ) . '" data-risk="' . esc_attr( (string) ( Admin::needs_risk_confirm( $item ) ? Admin::risk_level( $item ) : 0 ) ) . '">';
+		// data-core: the file's place is wp-admin or wp-includes, so once it is in quarantine only
+		// its held copy can be deleted (admin.js mirrors Decisions::available() after a bulk action).
+		$core_dir = class_exists( '\WPCyberSecurity\Decisions' ) && Decisions::in_core_dir( $item );
+		echo '<tr class="' . esc_attr( implode( ' ', $classes ) ) . '" data-item-id="' . esc_attr( (string) $id ) . '" data-type="' . esc_attr( $type ) . '" data-held="' . ( $held ? '1' : '0' ) . '" data-core="' . ( $core_dir ? '1' : '0' ) . '" data-risk="' . esc_attr( (string) ( Admin::needs_risk_confirm( $item ) ? Admin::risk_level( $item ) : 0 ) ) . '">';
 
 		// Checkbox.
 		echo '<th scope="row" class="wpcs-cb-cell"><input type="checkbox" class="wpcs-cb-item" name="ids[]" value="' . esc_attr( (string) $id ) . '" form="' . esc_attr( self::FORM_ID ) . '"'
@@ -606,27 +611,27 @@ class Reports_Page {
 			. ' aria-label="' . esc_attr( sprintf( __( 'Select %s', 'qartvelo-guard' ), $this->item_title( $item ) ) ) . '"></th>';
 
 		// Type.
-		echo '<td class="column-type">' . $this->type_badge( $type, $item ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo wp_kses( '<td class="column-type">' . $this->type_badge( $type, $item ) . '</td>', Kses::allowed() );
 
 		// Item.
-		echo '<td class="column-item">' . $this->item_cell( $item, $details ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo wp_kses( '<td class="column-item">' . $this->item_cell( $item, $details ) . '</td>', Kses::allowed() );
 
 		// Source.
 		// data-label: the narrow layout hides the table header and prints these instead.
-		echo '<td class="column-source" data-label="' . esc_attr__( 'Source', 'qartvelo-guard' ) . '">' . $this->source_cell( $item, $details ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo wp_kses( '<td class="column-source" data-label="' . esc_attr__( 'Source', 'qartvelo-guard' ) . '">' . $this->source_cell( $item, $details ) . '</td>', Kses::allowed() );
 
 		// Detected.
 		$ts = Admin::utc_ts( $item['created_at'] );
 		echo '<td class="column-detected" data-label="' . esc_attr__( 'Detected', 'qartvelo-guard' ) . '"><span title="' . esc_attr( Admin::datetime( $ts ) ) . '">' . esc_html( Admin::ago( $ts ) ) . '</span><span class="wpcs-sub">' . esc_html( $ts ? wp_date( get_option( 'date_format' ), $ts ) : '' ) . '</span></td>';
 
 		// Verdict.
-		echo '<td class="column-verdict" data-label="' . esc_attr__( 'Verdict', 'qartvelo-guard' ) . '">' . $this->verdict_cell( $item, $details ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo wp_kses( '<td class="column-verdict" data-label="' . esc_attr__( 'Verdict', 'qartvelo-guard' ) . '">' . $this->verdict_cell( $item, $details ) . '</td>', Kses::allowed() );
 
 		// Status.
-		echo '<td class="column-status" data-label="' . esc_attr__( 'Status', 'qartvelo-guard' ) . '" data-wpcs-status>' . $this->status_cell( $item, $held ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo wp_kses( '<td class="column-status" data-label="' . esc_attr__( 'Status', 'qartvelo-guard' ) . '" data-wpcs-status>' . $this->status_cell( $item, $held ) . '</td>', Kses::allowed() );
 
 		// Actions.
-		echo '<td class="column-actions">' . $this->actions_cell( $item, $available, $held ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo wp_kses( '<td class="column-actions">' . $this->actions_cell( $item, $available, $held ) . '</td>', Kses::allowed() );
 
 		echo '</tr>';
 
@@ -1198,6 +1203,28 @@ class Reports_Page {
 	}
 
 	/**
+	 * Where the "Reinstall WordPress core" link of a changed core file leads:
+	 * the core card on this page, else the one on the Dashboard, else (the
+	 * card is not shown because a filter raised its threshold) WordPress's own
+	 * Dashboard > Updates screen with its Re-install button.
+	 *
+	 * @return string
+	 */
+	private function core_card_url() {
+		if ( $this->core_card ) {
+			return '#wpcs-core-card';
+		}
+		$repair = function_exists( 'wpcybersec' ) ? wpcybersec()->core_repair : null;
+		if ( $repair instanceof Core_Repair ) {
+			$damage = $repair->damage();
+			if ( ! empty( $damage['show'] ) && ! empty( $damage['repairable'] ) ) {
+				return Admin::page_url( Admin::PAGE_DASHBOARD ) . '#wpcs-core-card';
+			}
+		}
+		return Core_Repair::updates_url();
+	}
+
+	/**
 	 * Decision buttons (all relevant ones rendered, unavailable ones hidden so
 	 * core.js can reveal them after a status change), Download and Details.
 	 *
@@ -1231,17 +1258,25 @@ class Reports_Page {
 		} elseif ( in_array( $type, array( Store::TYPE_UPLOAD, Store::TYPE_INSTALL ), true ) ) {
 			$set = array( 'approve', 'deny', 'restore', 'delete' );
 		} elseif ( Store::TYPE_THREAT === $type ) {
-			$set = array( 'approve', 'ignore', 'restore_official', 'quarantine', 'restore', 'delete' );
+			$set = array( 'approve', 'ignore', 'quarantine', 'restore', 'delete' );
 		} else {
-			$set = array( 'approve', 'restore_official', 'quarantine', 'restore', 'delete' );
+			$set = array( 'approve', 'quarantine', 'restore', 'delete' );
 		}
 		$critical = class_exists( '\WPCyberSecurity\Decisions' ) && Decisions::is_critical( $item );
-		if ( $critical ) {
-			// Never offered for these files, so the buttons are not rendered at all.
-			$set = array_values( array_diff( $set, array( 'quarantine', 'delete' ) ) );
-		} else {
-			$set = array_values( array_diff( $set, array( 'restore_official' ) ) );
+		// A file whose place is wp-admin or wp-includes, and whether its held copy cannot go
+		// back there (Decisions::held_from_core()): then only Delete, for the held copy.
+		$core_dir  = class_exists( '\WPCyberSecurity\Decisions' ) && Decisions::in_core_dir( $item );
+		$core_held = $core_dir && Decisions::held_from_core( $item ) && in_array( $item['status'], array( Store::STATUS_PENDING, Store::STATUS_QUARANTINED ), true );
+		if ( $core_held ) {
+			$set = array( 'delete' );
+		} elseif ( $critical ) {
+			// Never offered for these files, so the buttons are not rendered at all. A held
+			// copy from wp-admin or wp-includes may be deleted: the live file is not touched.
+			$set = array_values( array_diff( $set, $core_dir && '' !== (string) $item['quarantine_path'] ? array( 'quarantine' ) : array( 'quarantine', 'delete' ) ) );
 		}
+		// A changed or infected WordPress core file: the plugin never writes a core
+		// file, so the main action is a link to the card where WordPress reinstalls its core.
+		$reinstall = $critical && Decisions::needs_core_reinstall( $item );
 
 		$titles = array(
 			'approve'    => Store::TYPE_INSTALL === $type
@@ -1252,7 +1287,6 @@ class Reports_Page {
 			'restore'    => __( 'Put the file back where it was, without trusting it', 'qartvelo-guard' ),
 			'deny'       => __( 'Reject it and delete the held copy', 'qartvelo-guard' ),
 			'delete'     => __( 'Delete permanently', 'qartvelo-guard' ),
-			'restore_official' => __( 'Replace the file with the verified official WordPress copy. The current version is kept as a copy.', 'qartvelo-guard' ),
 		);
 		if ( Store::TYPE_USER === $type ) {
 			$titles['approve'] = __( 'This administrator is expected: trust the account from now on', 'qartvelo-guard' );
@@ -1267,12 +1301,12 @@ class Reports_Page {
 			: sprintf( __( 'Delete %s from the server permanently? This cannot be undone.', 'qartvelo-guard' ), $name );
 
 		// Flagged high or critical: the safe decision (deny, quarantine, or the
-		// official copy of a critical file) comes first as the primary button;
-		// Allow and Mark safe become plain buttons that ask before acting.
+		// core reinstall link of a critical core file) comes first as the primary
+		// button; Allow and Mark safe become plain buttons that ask before acting.
 		$risky   = Admin::needs_risk_confirm( $item );
 		$primary = '';
 		if ( $risky ) {
-			foreach ( array( 'deny', 'quarantine', 'restore_official' ) as $safe ) {
+			foreach ( array( 'deny', 'quarantine' ) as $safe ) {
 				if ( in_array( $safe, $set, true ) && in_array( $safe, $available, true ) ) {
 					$primary = $safe;
 					break;
@@ -1286,6 +1320,11 @@ class Reports_Page {
 		}
 
 		$html = '<div class="wpcs-actions' . ( $risky ? ' wpcs-actions--risky' : '' ) . '">';
+		if ( $reinstall ) {
+			$html .= '<a class="button button-small wpcs-act wpcs-act--reinstall' . ( $risky && '' === $primary ? ' wpcs-btn-block' : '' ) . '" data-wpcs-core-link href="' . esc_url( $this->core_card_url() ) . '"'
+				. ' title="' . esc_attr__( 'WordPress reinstalls its core and so restores every core file from the official package: opens the card that starts it', 'qartvelo-guard' ) . '">'
+				. '<span class="dashicons dashicons-wordpress" aria-hidden="true"></span>' . esc_html__( 'Reinstall WordPress core', 'qartvelo-guard' ) . '</a>';
+		}
 		foreach ( $set as $action ) {
 			$label   = $labels[ $action ];
 			$classes = 'button button-small wpcs-act wpcs-act--' . $action . ( $label[2] ? ' ' . $label[2] : '' ) . ( $action === $primary ? ' wpcs-btn-block' : '' ) . ( in_array( $action, $available, true ) ? '' : ' wpcs-hidden' );
@@ -1300,8 +1339,6 @@ class Reports_Page {
 						. ' data-risk-confirm="' . esc_attr( $confirm['confirm'] ) . '" data-risk-cancel="' . esc_attr__( 'Cancel', 'qartvelo-guard' ) . '"'
 					: '' )
 				. ( 'delete' === $action ? ' data-confirm="' . esc_attr( $confirm_delete ) . '"' : '' )
-				/* translators: %s: file name */
-				. ( 'restore_official' === $action ? ' data-confirm="' . esc_attr( sprintf( __( 'Replace %s with the official WordPress file? The current version is kept as a copy, so the changes can still be viewed.', 'qartvelo-guard' ), $name ) ) . '"' : '' )
 				. ( Store::TYPE_USER === $type && 'deny' === $action
 					/* translators: %s: user login */
 					? ' data-confirm="' . esc_attr( sprintf( __( 'Remove the administrator role from %s? The account becomes a subscriber and is signed out everywhere.', 'qartvelo-guard' ), $name ) ) . '"'
@@ -1317,10 +1354,22 @@ class Reports_Page {
 				. '><span class="dashicons dashicons-' . esc_attr( $label[1] ) . '" aria-hidden="true"></span>' . esc_html( $label[0] ) . '</button>';
 		}
 		$html .= '</div>';
-		if ( $critical && in_array( $item['status'], array( Store::STATUS_PENDING, Store::STATUS_QUARANTINED, Store::STATUS_RESTORED ), true ) ) {
-			$note  = in_array( 'restore_official', $available, true )
-				? __( 'Critical file: it cannot be quarantined. If you did not make this change, use Restore official file.', 'qartvelo-guard' )
-				: __( 'Critical file: it cannot be quarantined and has no official copy to restore here (wp-config.php and version.php are specific to this site). If you did not make this change, restore it from a backup; Changes shows what was edited.', 'qartvelo-guard' );
+		if ( $core_dir ) {
+			// Shown while the held copy cannot go back; rendered hidden otherwise, so the
+			// scripts can show it right after the file was moved to quarantine.
+			$html .= '<p class="wpcs-critical-note' . ( $core_held ? '' : ' wpcs-hidden' ) . '" data-wpcs-core-note><span class="dashicons dashicons-info" aria-hidden="true"></span><span>'
+				. sprintf(
+					/* translators: %s: link "Reinstall WordPress core" */
+					esc_html__( 'Qartvelo Guard does not write into wp-admin, wp-includes or its own folder. An official WordPress file comes back with %s, a file of this plugin by installing the plugin again; any other file can be downloaded here and put back by hand.', 'qartvelo-guard' ),
+					'<a href="' . esc_url( $this->core_card_url() ) . '">' . esc_html__( 'Reinstall WordPress core', 'qartvelo-guard' ) . '</a>'
+				)
+				. '</span></p>';
+		}
+		// Not for a copy held out of wp-admin or wp-includes: that file is in quarantine, whatever the note says.
+		if ( $critical && ! ( $core_dir && '' !== (string) $item['quarantine_path'] ) && in_array( $item['status'], array( Store::STATUS_PENDING, Store::STATUS_QUARANTINED, Store::STATUS_RESTORED ), true ) ) {
+			$note  = $reinstall
+				? __( 'Critical file: it cannot be quarantined. If you did not make this change, reinstall WordPress core: that restores every core file from the official package.', 'qartvelo-guard' )
+				: __( 'Critical file: it cannot be quarantined, and a core reinstall does not restore it (wp-config.php, .htaccess and version.php are specific to this site). If you did not make this change, restore it from a backup; Changes shows what was edited.', 'qartvelo-guard' );
 			$html .= '<p class="wpcs-critical-note"><span class="dashicons dashicons-shield" aria-hidden="true"></span><span>' . esc_html( $note ) . '</span></p>';
 		}
 
@@ -1399,7 +1448,7 @@ class Reports_Page {
 
 		echo '<div class="wpcs-details">';
 
-		echo $this->preview_html( $item ); // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo wp_kses( $this->preview_html( $item ), Kses::allowed() );
 
 		$button = Diff::view_button( $item, $this->has_held_copy( $item ) );
 		if ( $button ) {
@@ -1426,8 +1475,7 @@ class Reports_Page {
 				if ( strlen( $snippet ) > 600 ) {
 					$snippet = ( function_exists( 'mb_substr' ) ? mb_substr( $snippet, 0, 600 ) : substr( $snippet, 0, 600 ) ) . ' ...';
 				}
-				echo '<li class="wpcs-hit"><div class="wpcs-hit__head">' . Admin::severity_badge( isset( $hit['severity'] ) ? (int) $hit['severity'] : 0 ) // phpcs:ignore WordPress.Security.EscapeOutput -- escaped in severity_badge().
-					. ' <strong>' . esc_html( $title ) . '</strong>';
+				echo wp_kses( '<li class="wpcs-hit"><div class="wpcs-hit__head">' . Admin::severity_badge( isset( $hit['severity'] ) ? (int) $hit['severity'] : 0 ) . ' <strong>' . esc_html( $title ) . '</strong>', Kses::allowed() );
 				if ( ! empty( $hit['file'] ) ) {
 					// File inside a held plugin or theme package (install items).
 					echo ' <code class="wpcs-hit__file" title="' . esc_attr__( 'File inside the package', 'qartvelo-guard' ) . '">' . esc_html( (string) $hit['file'] ) . '</code>';
@@ -1684,10 +1732,10 @@ class Reports_Page {
 		$severity  = (int) $item['severity'];
 		$ts        = Admin::utc_ts( $item['created_at'] );
 
-		echo '<section class="wpcs-card wpcs-change-item wpcs-sev-' . esc_attr( (string) $severity ) . '" data-item-id="' . esc_attr( (string) $item['id'] ) . '" data-held="' . ( $held ? '1' : '0' ) . '">';
-		echo '<div class="wpcs-change-item__badges">' . $this->type_badge( (string) $item['type'], $item ); // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo '<section class="wpcs-card wpcs-change-item wpcs-sev-' . esc_attr( (string) $severity ) . '" data-item-id="' . esc_attr( (string) $item['id'] ) . '" data-held="' . ( $held ? '1' : '0' ) . '" data-core="' . ( Decisions::in_core_dir( $item ) ? '1' : '0' ) . '">';
+		echo wp_kses( '<div class="wpcs-change-item__badges">' . $this->type_badge( (string) $item['type'], $item ), Kses::allowed() );
 		if ( Store::TYPE_THREAT === $item['type'] || $hits ) {
-			echo Admin::severity_badge( $severity ); // phpcs:ignore WordPress.Security.EscapeOutput -- escaped in severity_badge().
+			echo wp_kses( Admin::severity_badge( $severity ), Kses::allowed() );
 		}
 		if ( ! empty( $details['change'] ) ) {
 			echo 'modified' === $details['change']
@@ -1698,7 +1746,7 @@ class Reports_Page {
 			echo '<span class="wpcs-chip wpcs-chip--warn">' . esc_html__( 'differs from the official file', 'qartvelo-guard' ) . '</span>';
 		}
 		echo '</div>';
-		echo '<h2 class="wpcs-change-item__path">' . $this->path_html( (string) $item['path'] ) . '</h2>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo wp_kses( '<h2 class="wpcs-change-item__path">' . $this->path_html( (string) $item['path'] ) . '</h2>', Kses::allowed() );
 
 		list( $who, $context ) = $this->source_parts( $item, $details );
 		$facts = array(
@@ -1717,11 +1765,11 @@ class Reports_Page {
 		}
 		echo '<dl class="wpcs-change-item__facts">';
 		foreach ( $facts as $label => $value ) {
-			echo '<div><dt>' . esc_html( $label ) . '</dt><dd>' . $value . '</dd></div>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+			echo wp_kses( '<div><dt>' . esc_html( $label ) . '</dt><dd>' . $value . '</dd></div>', Kses::allowed() );
 		}
 		echo '</dl>';
 
-		echo '<div class="wpcs-change-item__actions">' . $this->actions_cell( $item, $available, $held, array( 'details' => false, 'changes' => false ) ) . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo wp_kses( '<div class="wpcs-change-item__actions">' . $this->actions_cell( $item, $available, $held, array( 'details' => false, 'changes' => false ) ) . '</div>', Kses::allowed() );
 		echo '</section>';
 	}
 
@@ -1764,8 +1812,7 @@ class Reports_Page {
 			$line  = isset( $hit['line'] ) ? (int) $hit['line'] : 0;
 			$code  = $this->hit_code( $hit, $line, $result, ! empty( $hit['file'] ) ? basename( (string) $hit['file'] ) : $name );
 
-			echo '<li class="wpcs-hit"><div class="wpcs-hit__head">' . Admin::severity_badge( isset( $hit['severity'] ) ? (int) $hit['severity'] : 0 ) // phpcs:ignore WordPress.Security.EscapeOutput -- escaped in severity_badge().
-				. ' <strong>' . esc_html( $title ) . '</strong>';
+			echo wp_kses( '<li class="wpcs-hit"><div class="wpcs-hit__head">' . Admin::severity_badge( isset( $hit['severity'] ) ? (int) $hit['severity'] : 0 ) . ' <strong>' . esc_html( $title ) . '</strong>', Kses::allowed() );
 			if ( $line > 0 ) {
 				/* translators: %s: line number */
 				$text = sprintf( __( 'line %s', 'qartvelo-guard' ), number_format_i18n( $line ) );
@@ -1884,7 +1931,7 @@ class Reports_Page {
 			echo '<div class="wpcs-empty wpcs-empty--compact"><span class="dashicons dashicons-media-code" aria-hidden="true"></span><p>' . esc_html( (string) $result['reason_text'] ) . '</p></div>';
 		} elseif ( '' !== (string) $result['html'] ) {
 			// Built by Diff with every line passed through esc_html().
-			echo '<div class="wpcs-diff-body">' . $result['html'] . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			echo wp_kses( '<div class="wpcs-diff-body">' . $result['html'] . '</div>', Kses::allowed() );
 		}
 		echo '</section>';
 	}
@@ -2094,7 +2141,7 @@ class Reports_Page {
 		echo '<th scope="col" class="column-explained">' . esc_html__( 'Explained by', 'qartvelo-guard' ) . '</th>';
 		echo '<th scope="col" class="column-actions">' . esc_html__( 'Actions', 'qartvelo-guard' ) . '</th>';
 		echo '</tr></thead><tbody>';
-		echo $html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built with escaping in recent_row().
+		echo wp_kses( $html, Kses::allowed() );
 		echo '</tbody></table></div>';
 
 		$this->render_pagination( $total, $per_page );
@@ -2248,7 +2295,7 @@ class Reports_Page {
 		echo '<div class="wpcs-change-item__badges"><span class="wpcs-badge wpcs-type wpcs-type--file"><span class="dashicons dashicons-media-code" aria-hidden="true"></span>' . esc_html__( 'File', 'qartvelo-guard' ) . '</span>';
 		$tone = 'none' === $why['kind'] ? 'high' : ( 'reported' === $why['kind'] ? 'pending' : 'ok' );
 		echo '<span class="wpcs-badge wpcs-badge--' . esc_attr( $tone ) . '">' . esc_html( $why['label'] ) . '</span></div>';
-		echo '<h2 class="wpcs-change-item__path">' . $this->path_html( $file['rel'] ) . '</h2>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+		echo wp_kses( '<h2 class="wpcs-change-item__path">' . $this->path_html( $file['rel'] ) . '</h2>', Kses::allowed() );
 		$facts = array(
 			__( 'Modified', 'qartvelo-guard' ) => '<span title="' . esc_attr( Admin::datetime( $mtime ) ) . '">' . esc_html( Admin::ago( $mtime ) ) . '</span><span class="wpcs-sub">' . esc_html( Admin::datetime( $mtime ) ) . '</span>',
 			__( 'Size', 'qartvelo-guard' )     => esc_html( size_format( (int) $item['size'], (int) $item['size'] >= KB_IN_BYTES ? 1 : 0 ) ),
@@ -2258,12 +2305,13 @@ class Reports_Page {
 		}
 		echo '<dl class="wpcs-change-item__facts">';
 		foreach ( $facts as $label => $value ) {
-			echo '<div><dt>' . esc_html( $label ) . '</dt><dd>' . $value . '</dd></div>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+			echo wp_kses( '<div><dt>' . esc_html( $label ) . '</dt><dd>' . $value . '</dd></div>', Kses::allowed() );
 		}
 		echo '</dl>';
 		if ( 'none' === $why['kind'] && ! is_array( $why['item'] ) ) {
-			echo '<div class="wpcs-change-item__actions"><p class="wpcs-muted">' . esc_html__( 'Nothing explains this change. If you do not recognise it, report the file: it then waits in Pending approvals, where you can allow it or move it to quarantine.', 'qartvelo-guard' ) . '</p>'
-				. $this->report_form( $file['rel'], 'button button-primary' ) . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+			echo '<div class="wpcs-change-item__actions"><p class="wpcs-muted">' . esc_html__( 'Nothing explains this change. If you do not recognise it, report the file: it then waits in Pending approvals, where you can allow it or move it to quarantine.', 'qartvelo-guard' ) . '</p>';
+			echo wp_kses( $this->report_form( $file['rel'], 'button button-primary' ), Kses::allowed() );
+			echo '</div>';
 		}
 		echo '</section>';
 
@@ -2309,7 +2357,7 @@ class Reports_Page {
 			echo '<div class="wpcs-empty wpcs-empty--compact"><span class="dashicons dashicons-media-code" aria-hidden="true"></span><p>' . esc_html( (string) $result['reason_text'] ) . '</p></div>';
 		} elseif ( '' !== (string) $result['html'] ) {
 			// Built by Diff with every line passed through esc_html() after redaction.
-			echo '<div class="wpcs-diff-body">' . $result['html'] . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			echo wp_kses( '<div class="wpcs-diff-body">' . $result['html'] . '</div>', Kses::allowed() );
 		}
 		echo '</section>';
 	}
@@ -2426,9 +2474,9 @@ class Reports_Page {
 			$confirm = sprintf( __( 'Remove "%s" from the allowlist? No file is deleted, but the next time it appears it is held for your approval again.', 'qartvelo-guard' ), $label );
 
 			echo '<tr>';
-			echo '<td class="column-kind">' . $badge . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+			echo wp_kses( '<td class="column-kind">' . $badge . '</td>', Kses::allowed() );
 			echo '<td class="column-label"><span class="wpcs-path">' . esc_html( $label ) . '</span></td>';
-			echo '<td class="column-value">' . $value_h . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with escaping.
+			echo wp_kses( '<td class="column-value">' . $value_h . '</td>', Kses::allowed() );
 			echo '<td class="column-by">' . esc_html( '' !== $by ? $by : __( 'System', 'qartvelo-guard' ) ) . '</td>';
 			echo '<td class="column-when"><span title="' . esc_attr( Admin::datetime( $ts ) ) . '">' . esc_html( Admin::ago( $ts ) ) . '</span></td>';
 			echo '<td class="column-note"><span class="wpcs-sub">' . esc_html( isset( $row['note'] ) ? (string) $row['note'] : '' ) . '</span></td>';
@@ -2551,8 +2599,7 @@ class Reports_Page {
 		$events = Admin::call( 'store', 'log_events', array(), null );
 		if ( ! is_array( $events ) ) {
 			global $wpdb;
-			$table  = Store::table( 'log' );
-			$events = $wpdb->get_col( "SELECT DISTINCT event FROM {$table} ORDER BY event ASC LIMIT 200" ); // phpcs:ignore WordPress.DB, PluginCheck.Security.DirectDB.UnescapedDBParameter -- $table is Store::table(): $wpdb->prefix plus a fixed name.
+			$events = $wpdb->get_col( $wpdb->prepare( 'SELECT DISTINCT event FROM %i ORDER BY event ASC LIMIT 200', Store::table( 'log' ) ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- plugin's own table; no WordPress API covers it.
 		}
 		$events = array_filter( array_map( 'sanitize_key', (array) $events ) );
 		sort( $events );

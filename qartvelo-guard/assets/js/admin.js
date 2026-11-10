@@ -176,8 +176,13 @@
 		deleted: 'muted'
 	};
 
-	/* Mirrors Decisions::available() for statuses reached through a decision. */
-	function availableAfter(status) {
+	/* Mirrors Decisions::available() for statuses reached through a decision.
+	   A file moved out of wp-admin or wp-includes (data-core="1") is not put back
+	   by the plugin: only its held copy can be deleted. */
+	function availableAfter(status, row) {
+		if (status === 'quarantined' && row && row.getAttribute('data-core') === '1') {
+			return [ 'delete' ];
+		}
 		if (status === 'quarantined') {
 			return [ 'approve', 'restore', 'delete' ];
 		}
@@ -209,16 +214,29 @@
 		toArray(row.querySelectorAll('.wpcs-actions [data-wpcs-action]')).forEach(function (b) {
 			b.classList.toggle('wpcs-hidden', available.indexOf(b.getAttribute('data-wpcs-action')) === -1);
 		});
+		// The "Reinstall WordPress core" link of a changed core file: decided now.
+		toArray(row.querySelectorAll('.wpcs-actions [data-wpcs-core-link]')).forEach(function (a) {
+			a.classList.add('wpcs-hidden');
+		});
 
 		var download = row.querySelector('.wpcs-download');
 		if (download) {
 			download.classList.toggle('wpcs-hidden', !held);
 		}
+		showCoreNote(row, held);
 
 		var box = row.querySelector('.wpcs-cb-item');
 		if (box) {
 			box.checked = false;
 			box.disabled = available.length === 0;
+		}
+	}
+
+	/* The note of a file held out of wp-admin or wp-includes: shown while its copy is held. */
+	function showCoreNote(row, held) {
+		var note = row.querySelector('[data-wpcs-core-note]');
+		if (note) {
+			note.classList.toggle('wpcs-hidden', !held);
 		}
 	}
 
@@ -275,6 +293,7 @@
 			if (download) {
 				download.classList.toggle('wpcs-hidden', !held);
 			}
+			showCoreNote(row, held);
 			var box = row.querySelector('.wpcs-cb-item');
 			if (box) {
 				box.checked = false;
@@ -391,7 +410,7 @@
 						return;
 					}
 					var held = heldAfter(action);
-					applyRowState(row, status, availableAfter(status), held);
+					applyRowState(row, status, availableAfter(status, row), held);
 				});
 				toArray(document.querySelectorAll('.wpcs-items')).forEach(syncSelectAll);
 				updateMenuCounts(res.counts);

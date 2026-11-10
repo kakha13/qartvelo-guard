@@ -20,7 +20,7 @@ defined( 'ABSPATH' ) || exit;
  *                every folder of Paths::scan_set(): the scan root, the
  *                WordPress folders outside it (listed by absolute path), the
  *                home folder (its own files only) and a wp-config.php above
- *                ABSPATH. Directories are read as a stream; a folder too
+ *                the WordPress folder. Directories are read as a stream; a folder too
  *                large for one tick continues from an entry count next tick
  *                (state 'cursor'), and its rows are never treated as deleted.
  *                A symlinked directory is not walked through the link: when
@@ -38,7 +38,7 @@ defined( 'ABSPATH' ) || exit;
  *                rows this run never touched and nobody wrote since it
  *                started), list cleanup, save last_result, log, notify.
  *
- * Concurrency: AJAX, WP-Cron and bin/cron.php can all drive the same job. Only
+ * Concurrency: AJAX, WP-Cron and WP-CLI can all drive the same job. Only
  * one of them works at a time: tick(), start() and cancel() take the row lock
  * 'wpcybersec_job_lock' (INSERT IGNORE into the options table of the main site, value
  * "<expires>:<token>", taken over atomically once expired). A tick that cannot
@@ -720,7 +720,7 @@ class Scan_Job {
 	}
 
 	/**
-	 * Runs ticks until the job is no longer active (CLI and bin/cron.php).
+	 * Runs ticks until the job is no longer active (WP-CLI).
 	 * Waits while another runner holds the lock. Stops when the job it started
 	 * with is over, even when a queued rebaseline starts right after it.
 	 *
@@ -1087,7 +1087,7 @@ class Scan_Job {
 		$buffer = '';
 
 		// Single files and top-level-only folders of the scan set (the home
-		// folder, a wp-config.php above ABSPATH): listed once, first.
+		// folder, a wp-config.php above the WordPress folder): listed once, first.
 		while ( ! empty( $this->state['tops'] ) ) {
 			$top  = array_shift( $this->state['tops'] );
 			$path = rawurldecode( (string) $top['p'] );
@@ -2001,16 +2001,10 @@ class Scan_Job {
 	public static function generated_kind( $abs ) {
 		static $roots = null;
 		if ( null === $roots ) {
-			$roots = array();
-			foreach ( array( defined( 'WP_CONTENT_DIR' ) ? WP_CONTENT_DIR : '', ABSPATH . 'wp-content' ) as $dir ) {
-				if ( '' === $dir ) {
-					continue;
-				}
-				$roots[] = trailingslashit( wp_normalize_path( $dir ) );
-				$real    = realpath( $dir );
-				if ( $real ) {
-					$roots[] = trailingslashit( wp_normalize_path( $real ) );
-				}
+			$roots = array( trailingslashit( wp_normalize_path( WP_CONTENT_DIR ) ) );
+			$real  = realpath( WP_CONTENT_DIR );
+			if ( $real ) {
+				$roots[] = trailingslashit( wp_normalize_path( $real ) );
 			}
 			$roots = array_values( array_unique( $roots ) );
 		}
@@ -2789,21 +2783,21 @@ class Scan_Job {
 	 */
 	private function acquire_lock( $hold, $wait = 0.0 ) {
 		global $wpdb;
-		$table = esc_sql( Network::lock_table() );
+		$table = Network::lock_table();
 		$token = substr( md5( uniqid( 'wpcs-lock', true ) . wp_rand() . getmypid() ), 0, 16 );
 		$until = microtime( true ) + max( 0.0, (float) $wait );
 		$tries = 0;
 		while ( true ) {
 			$value = ( time() + (int) ceil( $hold ) ) . ':' . $token;
-			// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-			$added = $wpdb->query( $wpdb->prepare( "INSERT IGNORE INTO {$table} (option_name, option_value, autoload) VALUES (%s, %s, 'no')", self::LOCK_OPTION, $value ) );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- lock rows that several processes coordinate through: read and written past the object cache.
+			$added = $wpdb->query( $wpdb->prepare( "INSERT IGNORE INTO %i (option_name, option_value, autoload) VALUES (%s, %s, 'no')", $table, self::LOCK_OPTION, $value ) );
 			if ( $added ) {
 				return $value;
 			}
 			$current = self::db_option( self::LOCK_OPTION );
 			if ( null !== $current && (int) $current < time() ) {
-				// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-				$taken = $wpdb->query( $wpdb->prepare( "UPDATE {$table} SET option_value = %s WHERE option_name = %s AND option_value = %s", $value, self::LOCK_OPTION, $current ) );
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- lock rows that several processes coordinate through: read and written past the object cache.
+				$taken = $wpdb->query( $wpdb->prepare( 'UPDATE %i SET option_value = %s WHERE option_name = %s AND option_value = %s', $table, $value, self::LOCK_OPTION, $current ) );
 				if ( $taken ) {
 					return $value;
 				}
@@ -2834,9 +2828,9 @@ class Scan_Job {
 		if ( $value === $this->lock ) {
 			return true;
 		}
-		$table = esc_sql( Network::lock_table() );
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$ok = $wpdb->query( $wpdb->prepare( "UPDATE {$table} SET option_value = %s WHERE option_name = %s AND option_value = %s", $value, self::LOCK_OPTION, $this->lock ) );
+		$table = Network::lock_table();
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- lock rows that several processes coordinate through: read and written past the object cache.
+		$ok = $wpdb->query( $wpdb->prepare( 'UPDATE %i SET option_value = %s WHERE option_name = %s AND option_value = %s', $table, $value, self::LOCK_OPTION, $this->lock ) );
 		if ( $ok ) {
 			$this->lock = $value;
 			return true;
@@ -2854,9 +2848,9 @@ class Scan_Job {
 		if ( '' === (string) $value ) {
 			return;
 		}
-		$table = esc_sql( Network::lock_table() );
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$wpdb->query( $wpdb->prepare( "DELETE FROM {$table} WHERE option_name = %s AND option_value = %s", self::LOCK_OPTION, (string) $value ) );
+		$table = Network::lock_table();
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- lock rows that several processes coordinate through: read and written past the object cache.
+		$wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE option_name = %s AND option_value = %s', $table, self::LOCK_OPTION, (string) $value ) );
 	}
 
 	/**
@@ -2864,9 +2858,9 @@ class Scan_Job {
 	 */
 	private function request_cancel( $id ) {
 		global $wpdb;
-		$table = esc_sql( Network::lock_table() );
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$wpdb->query( $wpdb->prepare( "INSERT INTO {$table} (option_name, option_value, autoload) VALUES (%s, %s, 'no') ON DUPLICATE KEY UPDATE option_value = VALUES(option_value)", self::CANCEL_OPTION, (string) $id ) );
+		$table = Network::lock_table();
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- lock rows that several processes coordinate through: read and written past the object cache.
+		$wpdb->query( $wpdb->prepare( "INSERT INTO %i (option_name, option_value, autoload) VALUES (%s, %s, 'no') ON DUPLICATE KEY UPDATE option_value = VALUES(option_value)", $table, self::CANCEL_OPTION, (string) $id ) );
 		wp_cache_delete( self::CANCEL_OPTION, 'options' );
 	}
 
@@ -2875,9 +2869,9 @@ class Scan_Job {
 	 */
 	private function clear_cancel() {
 		global $wpdb;
-		$table = esc_sql( Network::lock_table() );
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$wpdb->query( $wpdb->prepare( "DELETE FROM {$table} WHERE option_name = %s", self::CANCEL_OPTION ) );
+		$table = Network::lock_table();
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- lock rows that several processes coordinate through: read and written past the object cache.
+		$wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE option_name = %s', $table, self::CANCEL_OPTION ) );
 		wp_cache_delete( self::CANCEL_OPTION, 'options' );
 	}
 
@@ -2907,9 +2901,9 @@ class Scan_Job {
 	 */
 	private static function db_option( $name ) {
 		global $wpdb;
-		$table = esc_sql( Network::lock_table() );
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$value = $wpdb->get_var( $wpdb->prepare( "SELECT option_value FROM {$table} WHERE option_name = %s LIMIT 1", $name ) );
+		$table = Network::lock_table();
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- lock rows that several processes coordinate through: read and written past the object cache.
+		$value = $wpdb->get_var( $wpdb->prepare( 'SELECT option_value FROM %i WHERE option_name = %s LIMIT 1', $table, $name ) );
 		return null === $value ? null : (string) $value;
 	}
 

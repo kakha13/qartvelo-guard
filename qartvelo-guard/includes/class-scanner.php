@@ -627,14 +627,12 @@ class Scanner {
 			if ( $real ) {
 				$roots[] = trailingslashit( wp_normalize_path( $real ) );
 			}
-		}
-		if ( defined( 'WP_PLUGIN_DIR' ) && defined( 'WPCYBERSEC_BASENAME' ) ) {
-			$folder = dirname( (string) WPCYBERSEC_BASENAME );
-			if ( '' !== $folder && '.' !== $folder ) {
-				$roots[] = trailingslashit( wp_normalize_path( WP_PLUGIN_DIR ) ) . $folder . '/';
-				$real    = realpath( WP_PLUGIN_DIR . '/' . $folder );
-				if ( $real ) {
-					$roots[] = trailingslashit( wp_normalize_path( $real ) );
+			// A symlinked install: WordPress remembers which folder inside the
+			// plugins folder leads to the real one (wp_register_plugin_realpath()).
+			global $wp_plugin_paths;
+			foreach ( is_array( $wp_plugin_paths ) ? $wp_plugin_paths : array() as $link => $target ) {
+				if ( in_array( trailingslashit( wp_normalize_path( (string) $target ) ), $roots, true ) ) {
+					$roots[] = trailingslashit( wp_normalize_path( (string) $link ) );
 				}
 			}
 		}
@@ -740,7 +738,7 @@ class Scanner {
 	}
 
 	/**
-	 * Whether ABSPATH/wordfence-waf.php is only Wordfence's firewall loader:
+	 * Whether wordfence-waf.php in the WordPress folder is only Wordfence's firewall loader:
 	 * comments, if / file_exists / defined / define and an include of
 	 * wp-content/plugins/wordfence/waf/bootstrap.php, nothing else. Any other
 	 * code (a variable, another function call, another include) and it is
@@ -853,7 +851,7 @@ class Scanner {
 
 	/**
 	 * Whether a file is exactly the early guard bootstrap this plugin writes
-	 * (ABSPATH/wpcybersec-guard.php), or one an earlier install wrote for
+	 * (wpcybersec-guard.php in the WordPress folder), or one an earlier install wrote for
 	 * another data folder (Guard_Manager::is_leftover_bootstrap(): the exact
 	 * template with paths that cannot run other code). A file with that name
 	 * but other content is not trusted.
@@ -902,7 +900,7 @@ class Scanner {
 		if ( ! is_array( $map ) ) {
 			return -1;
 		}
-		$root    = trailingslashit( wp_normalize_path( ABSPATH ) );
+		$root    = Paths::wp_root();
 		$skip    = array( 'readme.html', 'license.txt', 'wp-config-sample.php' );
 		$missing = 0;
 		foreach ( array_keys( $map ) as $core_rel ) {
@@ -945,16 +943,14 @@ class Scanner {
 	public function plugin_version( $slug ) {
 		if ( null === $this->plugin_versions ) {
 			$this->plugin_versions = array();
-			if ( ! function_exists( 'get_plugins' ) && is_readable( ABSPATH . 'wp-admin/includes/plugin.php' ) ) {
+			if ( ! function_exists( 'get_plugins' ) ) {
 				require_once ABSPATH . 'wp-admin/includes/plugin.php';
 			}
-			if ( function_exists( 'get_plugins' ) ) {
-				foreach ( (array) get_plugins() as $file => $data ) {
-					$folder = dirname( (string) $file );
-					if ( '.' !== $folder && ! isset( $this->plugin_versions[ $folder ] ) && ! empty( $data['Version'] ) ) {
-						$this->plugin_versions[ $folder ] = (string) $data['Version'];
-						$this->plugin_names[ $folder ]    = ! empty( $data['Name'] ) ? (string) $data['Name'] : $folder;
-					}
+			foreach ( (array) get_plugins() as $file => $data ) {
+				$folder = dirname( (string) $file );
+				if ( '.' !== $folder && ! isset( $this->plugin_versions[ $folder ] ) && ! empty( $data['Version'] ) ) {
+					$this->plugin_versions[ $folder ] = (string) $data['Version'];
+					$this->plugin_names[ $folder ]    = ! empty( $data['Name'] ) ? (string) $data['Name'] : $folder;
 				}
 			}
 		}
@@ -1041,13 +1037,10 @@ class Scanner {
 			return false;
 		}
 
-		if ( ! function_exists( 'get_core_checksums' ) && is_readable( ABSPATH . 'wp-admin/includes/update.php' ) ) {
+		$used = $locale;
+		if ( ! function_exists( 'get_core_checksums' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/update.php';
 		}
-		if ( ! function_exists( 'get_core_checksums' ) ) {
-			return false;
-		}
-		$used = $locale;
 		$sums = get_core_checksums( $version, $locale );
 		if ( ( ! is_array( $sums ) || ! $sums ) && 'en_US' !== $locale ) {
 			$used = 'en_US';
@@ -1294,7 +1287,7 @@ class Scanner {
 	 * @return string
 	 */
 	private function wp_version() {
-		$file = ABSPATH . ( defined( 'WPINC' ) ? WPINC : 'wp-includes' ) . '/version.php';
+		$file = Paths::wp_root() . WPINC . '/version.php';
 		$code = @file_get_contents( $file, false, null, 0, 4096 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- local file; WP_Filesystem may ask for FTP credentials, which a scan or cron run cannot answer.
 		if ( $code && preg_match( '~\$wp_version\s*=\s*[\x27"]([^\x27"]+)[\x27"]~', $code, $m ) ) {
 			return $m[1];
@@ -1312,7 +1305,7 @@ class Scanner {
 	 * @return string
 	 */
 	public function package_locale() {
-		$file = ABSPATH . ( defined( 'WPINC' ) ? WPINC : 'wp-includes' ) . '/version.php';
+		$file = Paths::wp_root() . WPINC . '/version.php';
 		$code = @file_get_contents( $file, false, null, 0, 16384 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- local file; WP_Filesystem may ask for FTP credentials, which a scan or cron run cannot answer.
 		if ( $code && preg_match( '~^\s*\$wp_local_package\s*=\s*[\x27"]([A-Za-z]{2,3}(?:_[A-Za-z0-9]{2,8}){0,2})[\x27"]\s*;~m', $code, $m ) ) {
 			return $m[1];
@@ -1344,7 +1337,7 @@ class Scanner {
 	}
 
 	/**
-	 * Path relative to ABSPATH, '' when outside WordPress.
+	 * Path relative to the WordPress folder, '' when outside WordPress.
 	 *
 	 * @param string $abs Absolute path.
 	 * @return string
@@ -1360,15 +1353,15 @@ class Scanner {
 	}
 
 	/**
-	 * ABSPATH as given and resolved (symlinked installs), with trailing slash.
+	 * The WordPress folder as given and resolved (symlinked installs), with trailing slash.
 	 *
 	 * @return string[]
 	 */
 	private function abspaths() {
 		static $roots = null;
 		if ( null === $roots ) {
-			$roots = array( trailingslashit( wp_normalize_path( ABSPATH ) ) );
-			$real  = realpath( ABSPATH );
+			$roots = array( Paths::wp_root() );
+			$real  = realpath( Paths::wp_root() );
 			if ( $real ) {
 				$roots[] = trailingslashit( wp_normalize_path( $real ) );
 			}
@@ -1385,13 +1378,10 @@ class Scanner {
 	private function plugin_roots() {
 		static $roots = null;
 		if ( null === $roots ) {
-			$roots = array();
-			if ( defined( 'WP_PLUGIN_DIR' ) ) {
-				$roots[] = trailingslashit( wp_normalize_path( WP_PLUGIN_DIR ) );
-				$real    = realpath( WP_PLUGIN_DIR );
-				if ( $real ) {
-					$roots[] = trailingslashit( wp_normalize_path( $real ) );
-				}
+			$roots = array( trailingslashit( wp_normalize_path( WP_PLUGIN_DIR ) ) );
+			$real  = realpath( WP_PLUGIN_DIR );
+			if ( $real ) {
+				$roots[] = trailingslashit( wp_normalize_path( $real ) );
 			}
 			$roots = array_values( array_unique( $roots ) );
 		}

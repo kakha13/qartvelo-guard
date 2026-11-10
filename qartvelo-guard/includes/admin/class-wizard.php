@@ -433,7 +433,7 @@ class Wizard {
 			Settings_Page::notice( __( 'Your settings are currently customized. Pick a level to start from its defaults, or keep your current settings.', 'qartvelo-guard' ), 'info' );
 		}
 		$this->render_upload_hint( $s );
-		echo Settings_Page::level_cards( 'level', $card ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in level_cards().
+		echo wp_kses( Settings_Page::level_cards( 'level', $card ), Kses::allowed() );
 		?>
 		<div class="wpcs-wizard__tune" data-wpcs-level-form="wizard">
 			<h3 class="wpcs-wizard__subtitle"><?php esc_html_e( 'Fine-tune', 'qartvelo-guard' ); ?></h3>
@@ -441,13 +441,16 @@ class Wizard {
 				<div class="wpcs-field__label"><?php esc_html_e( 'New uploads', 'qartvelo-guard' ); ?></div>
 				<div>
 				<?php
-				echo Settings_Page::radio_list( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in radio_list().
-					'upload_mode',
-					array(
-						'hold_all'   => array( __( 'Hold every upload', 'qartvelo-guard' ), __( 'Every new file waits until an administrator approves it. Safest; best for sites with few uploads.', 'qartvelo-guard' ) ),
-						'hold_risky' => array( __( 'Hold only risky uploads (clean images and documents pass after scanning)', 'qartvelo-guard' ), __( 'Risky means: files that can run code (PHP and other script names, double extensions such as photo.php.jpg, .htaccess), archives (ZIP, RAR, 7z, TAR, GZ), SVG, HTML, XML and JavaScript files, files whose content does not match their extension or whose type is unknown, and anything the malware scan flags.', 'qartvelo-guard' ) ),
+				echo wp_kses(
+					Settings_Page::radio_list(
+						'upload_mode',
+						array(
+							'hold_all'   => array( __( 'Hold every upload', 'qartvelo-guard' ), __( 'Every new file waits until an administrator approves it. Safest; best for sites with few uploads.', 'qartvelo-guard' ) ),
+							'hold_risky' => array( __( 'Hold only risky uploads (clean images and documents pass after scanning)', 'qartvelo-guard' ), __( 'Risky means: files that can run code (PHP and other script names, double extensions such as photo.php.jpg, .htaccess), archives (ZIP, RAR, 7z, TAR, GZ), SVG, HTML, XML and JavaScript files, files whose content does not match their extension or whose type is unknown, and anything the malware scan flags.', 'qartvelo-guard' ) ),
+						),
+						in_array( $s['upload_mode'], array( 'hold_all', 'hold_risky' ), true ) ? $s['upload_mode'] : ''
 					),
-					in_array( $s['upload_mode'], array( 'hold_all', 'hold_risky' ), true ) ? $s['upload_mode'] : ''
+					Kses::allowed()
 				);
 				?>
 				<span class="wpcs-field__help"><?php esc_html_e( 'Uploads that look malicious are always held, whichever you choose.', 'qartvelo-guard' ); ?></span>
@@ -597,7 +600,7 @@ class Wizard {
 		?>
 		<div class="wpcs-field">
 			<div class="wpcs-field__label"><?php esc_html_e( 'Send alerts', 'qartvelo-guard' ); ?></div>
-			<div><?php echo Settings_Page::notify_mode_choices( $s['notify_mode'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside. ?></div>
+			<div><?php echo wp_kses( Settings_Page::notify_mode_choices( $s['notify_mode'] ), Kses::allowed() ); ?></div>
 		</div>
 		<div class="wpcs-field">
 			<label class="wpcs-field__label" for="wpcs-notify-emails"><?php esc_html_e( 'Email recipients', 'qartvelo-guard' ); ?></label>
@@ -630,7 +633,7 @@ class Wizard {
 		</div>
 		<?php
 		// Optional, unchecked unless already chosen; "Skip" saves nothing, so it stays off.
-		echo Settings_Page::share_stats_box( ! empty( $s['share_stats'] ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside.
+		echo wp_kses( Settings_Page::share_stats_box( ! empty( $s['share_stats'] ) ), Kses::allowed() );
 	}
 
 	/**
@@ -665,7 +668,7 @@ class Wizard {
 			<p><?php esc_html_e( 'The uploads folder only needs images and documents. Blocking PHP there stops a planted backdoor from running even if it slips through.', 'qartvelo-guard' ); ?></p>
 			<?php if ( 'nginx' === $server ) : ?>
 				<p class="wpcs-muted"><?php esc_html_e( 'This server runs nginx, which ignores .htaccess files. Add these rules to the server block:', 'qartvelo-guard' ); ?></p>
-				<?php echo Settings_Page::code( $tools->nginx_rules() ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code(). ?>
+				<?php echo wp_kses( Settings_Page::code( $tools->nginx_rules() ), Kses::allowed() ); ?>
 			<?php elseif ( 'ours' !== $status ) : ?>
 				<button type="submit" name="wpcs_do" value="write_htaccess" class="button">
 					<span class="dashicons dashicons-media-text" aria-hidden="true"></span><?php esc_html_e( 'Add the rule to uploads/.htaccess', 'qartvelo-guard' ); ?>
@@ -710,14 +713,14 @@ class Wizard {
 				Settings_Page::render_steps( $hardening->manual_steps( 'wp_cron' ) );
 				echo $cron_runs ? '</details>' : '</div>';
 				echo '<details class="wpcs-manual"><summary>' . esc_html__( 'On your own server (crontab)', 'qartvelo-guard' ) . '</summary>';
-				echo Settings_Page::code( $cron[0]['code'], $cron[0]['file'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+				echo wp_kses( Settings_Page::code( $cron[0]['code'], $cron[0]['file'] ), Kses::allowed() );
 				echo '</details>';
 				if ( $hardening->descriptor( 'disable_wp_cron' ) ) {
 					$hardening->render_fix( 'disable_wp_cron' );
 				}
 			} else {
-				echo Settings_Page::code( $cron[0]['code'], $cron[0]['file'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
-				echo Settings_Page::code( $cron[2]['code'], $cron[2]['file'], $cron[2]['help'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+				echo wp_kses( Settings_Page::code( $cron[0]['code'], $cron[0]['file'] ), Kses::allowed() );
+				echo wp_kses( Settings_Page::code( $cron[2]['code'], $cron[2]['file'], $cron[2]['help'] ), Kses::allowed() );
 			}
 			?>
 		</div>
@@ -763,7 +766,7 @@ class Wizard {
 					$hardening->render_fix( 'data_dir' );
 				} else {
 					$data = $tools->data_dir_snippet();
-					echo Settings_Page::code( $data['config'], 'wp-config.php' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+					echo wp_kses( Settings_Page::code( $data['config'], 'wp-config.php' ), Kses::allowed() );
 				}
 			}
 			echo '<p>' . esc_html__( 'A secret key lets the plugin notice when someone edits the allowlist directly in the database.', 'qartvelo-guard' ) . '</p>';
@@ -772,7 +775,7 @@ class Wizard {
 			} elseif ( $hardening && method_exists( $hardening, 'render_fix' ) ) {
 				$hardening->render_fix( 'hmac_key' );
 			} else {
-				echo Settings_Page::code( $tools->hmac_snippet(), 'wp-config.php', __( 'The key was generated just now for you. Store it only in wp-config.php.', 'qartvelo-guard' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+				echo wp_kses( Settings_Page::code( $tools->hmac_snippet(), 'wp-config.php', __( 'The key was generated just now for you. Store it only in wp-config.php.', 'qartvelo-guard' ) ), Kses::allowed() );
 			}
 			?>
 		</div>
@@ -822,7 +825,7 @@ class Wizard {
 			// The self-test failed, or only a clamscan that is too slow for uploads works.
 			Settings_Page::notice( $clam['label'] . ( ! empty( $clam['hint'] ) ? ' ' . $clam['hint'] : '' ), 'broken' === $clam['state'] ? 'bad' : 'warn' );
 			if ( ! empty( $clam['hint_code'] ) ) {
-				echo Settings_Page::code( $clam['hint_code'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in code().
+				echo wp_kses( Settings_Page::code( $clam['hint_code'] ), Kses::allowed() );
 			}
 		}
 		echo '<p class="wpcs-row">';

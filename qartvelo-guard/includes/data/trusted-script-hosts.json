@@ -1,0 +1,25 @@
+{
+	"about": "Qartvelo Guard database scan: names that are compared with what a post, widget or option contains. Nothing is loaded from these hosts. script_hosts: a script tag that points to one of them is fixed embed code of a large provider and is not reported. tag_manager_frames: host and path of the noscript frame of a tag manager, which is not reported as a hidden frame.",
+	"script_hosts": [
+		"platform.twitter.com",
+		"www.instagram.com",
+		"instagram.com",
+		"www.tiktok.com",
+		"connect.facebook.net",
+		"assets.pinterest.com",
+		"embed.reddit.com",
+		"embed.redditmedia.com",
+		"s.imgur.com",
+		"embedr.flickr.com",
+		"player.vimeo.com",
+		"www.youtube.com",
+		"www.google.com",
+		"www.gstatic.com",
+		"apis.google.com",
+		"js.stripe.com",
+		"www.paypal.com"
+	],
+	"tag_manager_frames": [
+		"www.googletagmanager.com/ns.html"
+	]
+}

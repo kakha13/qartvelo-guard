@@ -19,7 +19,7 @@ Qartvelo Guard scans the whole site for malware and backdoors, holds every new u
 - **Allow once, allowed always.** Approvals are remembered by SHA-256 fingerprint and bound to executability: a file approved as an image is never accepted as PHP.
 - **What changed.** A line by line diff against the last approved copy or the official original, with secrets masked.
 - **Early upload guard.** An optional `auto_prepend_file` guard that holds uploads sent to any PHP script, installed with one click and a live test, with rollback.
-- **Clean core reinstall.** Replace damaged WordPress core with an official copy verified file by file, with automatic rollback and a restorable backup.
+- **Clean core reinstall.** When a core file is changed, infected or missing, one button starts WordPress's own updater (Dashboard > Updates > Re-install), which overwrites every core file with the official package. The plugin writes no core file itself.
 - **Database scan and administrator watch.** Injected scripts in options and posts, and new administrator accounts.
 - **Hosting aware.** Detects cPanel, CyberPanel, Plesk, aaPanel, DirectAdmin and many more, and shows that panel's own steps first.
 - **Optional antivirus engines.** ClamAV and Linux Malware Detect with a real self-test. They find more known infections; they do not block attacks.
@@ -28,7 +28,7 @@ Qartvelo Guard scans the whole site for malware and backdoors, holds every new u
 
 ## Requirements
 
-WordPress 6.0 or newer, PHP 7.4 or newer. Apache, nginx, LiteSpeed/OpenLiteSpeed and IIS are supported.
+WordPress 6.2 or newer, PHP 7.4 or newer. Apache, nginx, LiteSpeed/OpenLiteSpeed and IIS are supported.
 
 ## Install
 
@@ -63,7 +63,7 @@ After changing any plugin file, rebuild the checksums so the plugin does not rep
 php qartvelo-guard/bin/build-checksums.php
 ```
 
-Code rules: PHP 7.4 compatible syntax, WordPress 6.0+, capability checks and nonces on every handler, no em or en dashes. See `CLAUDE.md` and `docs/ARCHITECTURE.md`.
+Code rules: PHP 7.4 compatible syntax, WordPress 6.2+, capability checks and nonces on every handler, no em or en dashes. See `CLAUDE.md` and `docs/ARCHITECTURE.md`.
 
 ## Releasing
 

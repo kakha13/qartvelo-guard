@@ -237,7 +237,7 @@ class Hosting {
 	private static function default_value( $key ) {
 		switch ( $key ) {
 			case 'abspath':
-				return ABSPATH;
+				return Paths::wp_root();
 			case 'document_root':
 				return isset( $_SERVER['DOCUMENT_ROOT'] ) ? sanitize_text_field( wp_unslash( (string) $_SERVER['DOCUMENT_ROOT'] ) ) : '';
 			case 'php_binary':
@@ -269,7 +269,7 @@ class Hosting {
 			case 'server_software':
 				return isset( $_SERVER['SERVER_SOFTWARE'] ) ? sanitize_text_field( wp_unslash( (string) $_SERVER['SERVER_SOFTWARE'] ) ) : '';
 			case 'mu_dir':
-				return defined( 'WPMU_PLUGIN_DIR' ) ? (string) WPMU_PLUGIN_DIR : '';
+				return (string) WPMU_PLUGIN_DIR;
 		}
 		return '';
 	}
@@ -335,6 +335,9 @@ class Hosting {
 		}
 		$homes = array_values( array_unique( $homes ) );
 
+		// The patterns below only read the shape of the WordPress folder's and the
+		// document root's paths (hosting panels use fixed layouts such as
+		// /home/<user>/public_html); no path is built from those names.
 		$in_roots = function ( $pattern ) use ( $roots ) {
 			foreach ( $roots as $root ) {
 				if ( preg_match( $pattern, $root . '/' ) ) {
@@ -1036,7 +1039,7 @@ class Hosting {
 	 * @return array
 	 */
 	private function ctx() {
-		$abspath = untrailingslashit( wp_normalize_path( ABSPATH ) );
+		$abspath = untrailingslashit( Paths::wp_root() );
 		$plugin  = function_exists( 'wpcybersec' ) ? wpcybersec() : null;
 		$gm      = $plugin && $plugin->guard_manager ? $plugin->guard_manager : null;
 		$boot    = $gm && method_exists( $gm, 'bootstrap_path' ) ? wp_normalize_path( $gm->bootstrap_path() ) : $abspath . '/wpcybersec-guard.php';
@@ -1051,6 +1054,7 @@ class Hosting {
 		$domain  = (string) wp_parse_url( Network::home_url(), PHP_URL_HOST );
 		// Panel layouts name the account and the domain in the path: /home/<user>/web/<domain>/public_html
 		// (Hestia, Vesta), /home/<user>/domains/<domain>/public_html (DirectAdmin), /home/<user>/public_html.
+		// Only the shape of the WordPress folder's path is read here; nothing is built from these names.
 		$acct = preg_match( '#^/home\d*/([a-z0-9_][a-z0-9._-]*)/#i', $abspath . '/', $m ) && false === strpos( $m[1], '.' ) ? $m[1] : $user;
 		$site = preg_match( '#^/home\d*/[^/]+/(?:web|domains)/([^/]+)/public_html/#', $abspath . '/', $m ) ? $m[1] : $domain;
 		return array(
@@ -1097,44 +1101,43 @@ class Hosting {
 		$cmd = 'php' === $bin ? 'wp' : Sysadmin_Tools::shell_arg( $bin ) . ' ' . ( '' !== $wp ? Sysadmin_Tools::shell_arg( $wp ) : '"$(command -v wp)"' );
 		return self::s(
 			__( 'WP-CLI: the server\'s default php (and with it wp) can be another PHP version than this site\'s lsphp, and plugins that need this PHP version then stop WP-CLI with a fatal error (composer platform_check). Start WP-CLI with the site\'s own PHP, as the commands of this plugin do:', 'qartvelo-guard' ),
-			$cmd . ' --path=' . Sysadmin_Tools::shell_arg( untrailingslashit( wp_normalize_path( ABSPATH ) ) ) . ' core version'
+			$cmd . ' --path=' . Sysadmin_Tools::shell_arg( untrailingslashit( Paths::wp_root() ) ) . ' core version'
 		);
 	}
 
 	/**
-	 * The three real cron jobs (Sysadmin_Tools::cron_jobs(), the one source),
-	 * one step each, plus switching WP-Cron off.
+	 * The real cron jobs (Sysadmin_Tools::cron_jobs(), the one source), one
+	 * step each, plus switching WP-Cron off. Servers with WP-CLI get the scan
+	 * jobs and WordPress cron through WP-CLI; the others get the one job that
+	 * requests wp-cron.php, which starts the scheduled scans.
 	 *
 	 * @param array[] $intro      Steps before the jobs.
-	 * @param bool    $split      Show script and arguments apart (Plesk "Run a PHP script").
+	 * @param bool    $fetch      The panel has a "Fetch a URL" task type (Plesk): the one
+	 *                            wp-cron.php job, added as an address, so no shell is needed.
 	 * @param bool    $scans_only Only the two scan jobs: the host already runs WordPress
-	 *                            cron itself (GridPane GP-Cron, SpinupWP), so neither the
-	 *                            WordPress cron job nor switching WP-Cron off is shown.
+	 *                            cron itself (GridPane GP-Cron, SpinupWP) and ships WP-CLI, so
+	 *                            neither the WordPress cron job nor switching WP-Cron off is shown.
 	 * @return array[]
 	 */
-	private static function cron_steps( array $intro, $split = false, $scans_only = false ) {
+	private static function cron_steps( array $intro, $fetch = false, $scans_only = false ) {
 		$steps = $intro;
-		foreach ( Sysadmin_Tools::cron_jobs() as $job ) {
+		$jobs  = Sysadmin_Tools::cron_jobs( $fetch ? false : ( $scans_only ? true : null ) );
+		foreach ( $jobs as $job ) {
 			if ( $scans_only && 'wp_cron' === $job['id'] ) {
 				continue;
 			}
-			if ( $split ) {
-				if ( '' !== $job['url'] ) {
-					/* translators: 1: what the job does and when, 2: cron schedule */
-					$steps[] = self::s( sprintf( __( '%1$s. Schedule: %2$s. Task type "Fetch a URL", URL:', 'qartvelo-guard' ), $job['when'], $job['schedule'] ), $job['url'] );
-					continue;
-				}
-				// Plesk takes the script path relative to the subscription folder.
-				$script = preg_replace( '#^/var/www/vhosts/[^/]+/#', '', $job['script'] );
-				/* translators: 1: what the job does and when, 2: cron schedule */
-				$steps[] = self::s( sprintf( __( '%1$s. Schedule: %2$s. Task type "Run a PHP script", script path (in the subscription folder):', 'qartvelo-guard' ), $job['when'], $job['schedule'] ), $script );
-				if ( '' !== $job['args'] ) {
-					$steps[] = self::s( __( 'With these arguments:', 'qartvelo-guard' ), $job['args'] );
-				}
+			if ( $fetch && '' !== $job['url'] ) {
+				$steps[] = self::s(
+					'' !== $job['note']
+						/* translators: 1: what the job does and when, 2: cron schedule, 3: one more sentence about the schedule */
+						? sprintf( __( '%1$s. Schedule: %2$s. %3$s Task type "Fetch a URL", URL:', 'qartvelo-guard' ), $job['when'], $job['schedule'], $job['note'] )
+						/* translators: 1: what the job does and when, 2: cron schedule */
+						: sprintf( __( '%1$s. Schedule: %2$s. Task type "Fetch a URL", URL:', 'qartvelo-guard' ), $job['when'], $job['schedule'] ),
+					$job['url']
+				);
 				continue;
 			}
-			/* translators: 1: what the job does and when, 2: cron schedule */
-			$steps[] = self::s( sprintf( __( '%1$s. Schedule: %2$s. Command:', 'qartvelo-guard' ), $job['when'], $job['schedule'] ), $job['command'] );
+			$steps[] = self::s( Sysadmin_Tools::cron_job_text( $job ), $job['command'] );
 		}
 		if ( ! $scans_only ) {
 			$steps[] = Sysadmin_Tools::cron_disable_step();
@@ -1157,9 +1160,10 @@ class Hosting {
 		if ( $c['in_root'] ) {
 			$nginx .= "\n" . $tools->nginx_data_rule();
 		}
-		$cli   = Sysadmin_Tools::wp_cli();
+		// Commands a host panel runs as cron jobs: the full path to wp when it is known.
+		$cli   = Sysadmin_Tools::wp_cli_cron();
 		$wpcli = $cli . " wpcybersec scan --quiet\n" . $cli . ' wpcybersec scan --full --quiet';
-		$ping  = Network::home_url( 'wp-cron.php?doing_wp_cron' );
+		$ping  = Sysadmin_Tools::wp_cron_url();
 		/* translators: %s: host name */
 		$support = sprintf( __( '%s manages the server, so this cannot be set from the site. Ask its support whether they can do it for you, or skip it: the plugin keeps protecting the site without it.', 'qartvelo-guard' ), $name );
 		$key     = $id . ':' . $task;
@@ -1239,7 +1243,7 @@ class Hosting {
 				return self::cron_steps(
 					array(
 						self::s( __( 'In Plesk open Websites & Domains > Scheduled Tasks > Add Task. Tasks run as the system user of the subscription, the owner of the site files.', 'qartvelo-guard' ) ),
-						self::s( __( 'The "Run a command" type uses a chrooted shell by default that may not find PHP, so add the scans as "Run a PHP script": enter the script path and the arguments shown, and pick the PHP version of the site.', 'qartvelo-guard' ) ),
+						self::s( __( 'The "Run a command" type uses a chrooted shell by default that may not find PHP or WP-CLI, so add the job as "Fetch a URL": it runs WordPress cron, and with it the scheduled scans.', 'qartvelo-guard' ) ),
 					),
 					true
 				);
@@ -1314,7 +1318,7 @@ class Hosting {
 			case 'gridpane':
 				return self::cron_steps(
 					array(
-						self::s( __( 'GridPane runs WordPress cron itself (GP-Cron, on by default on newer servers), so only the two scan jobs are needed. GridPane has no panel field for custom jobs: as the site\'s system user run "crontab -e" over SSH and add the scan lines below.', 'qartvelo-guard' ) ),
+						self::s( __( 'GridPane runs WordPress cron itself (GP-Cron, on by default on newer servers), and with it the scheduled scans. For scans at fixed times add the two WP-CLI jobs below: GridPane has no panel field for custom jobs, so run "crontab -e" over SSH as the site\'s system user.', 'qartvelo-guard' ) ),
 					),
 					false,
 					true
@@ -1322,7 +1326,7 @@ class Hosting {
 			case 'spinupwp':
 				return self::cron_steps(
 					array(
-						self::s( __( 'SpinupWP already runs WordPress cron for the site (site dashboard > Cron), so only the two scan jobs are needed. Add them with "crontab -e" as the site user over SSH, below the lines SpinupWP manages (do not change those).', 'qartvelo-guard' ) ),
+						self::s( __( 'SpinupWP already runs WordPress cron for the site (site dashboard > Cron), and with it the scheduled scans. For scans at fixed times add the two WP-CLI jobs below with "crontab -e" as the site user over SSH, below the lines SpinupWP manages (do not change those).', 'qartvelo-guard' ) ),
 					),
 					false,
 					true
