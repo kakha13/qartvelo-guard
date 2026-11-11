@@ -19,6 +19,9 @@ defined( 'ABSPATH' ) || exit;
  * - upgrader_process_complete: re-trusts only the folders an update or install
  *   touched (File_Monitor::rebaseline_paths), so updates do not show up as
  *   hundreds of modified files.
+ * - upgrader_install_package_result: notes the files each language pack
+ *   installed. A translation update re-trusts those files only, never the
+ *   languages folder.
  * - file_mod_allowed: with freeze_mods on, every file modification through
  *   WordPress (installs, updates, editors) is refused unless temporarily unlocked.
  */
@@ -39,6 +42,9 @@ class Install_Gate {
 	/** @var string[] Queued folders where only files trusted before are trusted again (File_Monitor::rebaseline_paths()). */
 	private $rebaseline_known = array();
 
+	/** @var array[] Files that language packs installed in this request: "type|slug|language" => absolute paths (package_result()). */
+	private $translation_files = array();
+
 	/** @var string[] "type:slug" held during this request (skip their rebaseline). */
 	private $held_now = array();
 
@@ -57,6 +63,8 @@ class Install_Gate {
 		// Priority 20: WordPress validates the package itself at 10 (check_package).
 		add_filter( 'upgrader_source_selection', array( $this, 'source_selection' ), 20, 4 );
 		add_action( 'upgrader_process_complete', array( $this, 'process_complete' ), 20, 2 );
+		// Not upgrader_post_install: Language_Pack_Upgrader removes every callback of that hook.
+		add_filter( 'upgrader_install_package_result', array( $this, 'package_result' ), 20, 2 );
 		add_filter( 'file_mod_allowed', array( $this, 'file_mod_allowed' ), 20, 2 );
 	}
 
@@ -326,7 +334,16 @@ class Install_Gate {
 		try {
 			$this->collect_rebaseline_targets( $upgrader, $hook_extra );
 			// Remembered for Reports > Recent changes ("<Plugin> update" explains these files).
-			$touched = array_merge( array_slice( $this->rebaseline_dirs, $dirs_before ), array_slice( $this->rebaseline_files, $files_before ) );
+			// A language pack by its folder, not file by file: one pack has up to a
+			// hundred files, and the list of marks is short (Recent_Changes::MAX_MARKS).
+			$lang  = untrailingslashit( wp_normalize_path( WP_LANG_DIR ) );
+			$files = array_slice( $this->rebaseline_files, $files_before );
+			foreach ( $files as $k => $file ) {
+				if ( Storage::is_within( $file, $lang ) ) {
+					$files[ $k ] = dirname( $file );
+				}
+			}
+			$touched = array_values( array_unique( array_merge( array_slice( $this->rebaseline_dirs, $dirs_before ), $files ) ) );
 			if ( $touched ) {
 				Recent_Changes::remember_update( $touched, isset( $hook_extra['action'] ) && 'install' === $hook_extra['action'] ? 'install' : 'update' );
 			}
@@ -441,9 +458,81 @@ class Install_Gate {
 		}
 
 		if ( 'translation' === $type ) {
-			$lang = untrailingslashit( wp_normalize_path( WP_LANG_DIR ) );
-			$this->add_dir( $lang, dirname( $lang ) );
+			// Only the files a language pack installed in this request are judged
+			// again. The languages folder is copied into, never replaced, so it can
+			// hold files no update touched: those (a changed file, a file that was
+			// never part of a language pack) are left for the next scan. The
+			// upgrader names every pack it worked on, also one that failed, which
+			// is why the list alone is not enough (see package_result()).
+			$lang  = untrailingslashit( wp_normalize_path( WP_LANG_DIR ) );
+			$packs = isset( $hook_extra['translations'] ) && is_array( $hook_extra['translations'] ) ? $hook_extra['translations'] : array();
+			foreach ( $packs as $pack ) {
+				$key = is_array( $pack ) ? self::translation_key( $pack ) : '';
+				if ( '' === $key || empty( $this->translation_files[ $key ] ) ) {
+					continue;
+				}
+				foreach ( $this->translation_files[ $key ] as $file ) {
+					$this->add_file( $file, $lang );
+				}
+				unset( $this->translation_files[ $key ] );
+			}
 		}
+	}
+
+	/**
+	 * upgrader_install_package_result callback: notes which files a language
+	 * pack installed, for the translation update that is reported when all
+	 * packs are done (collect_rebaseline_targets()).
+	 *
+	 * Only a pack that was installed is noted (a failed one arrives here as a
+	 * WP_Error), with the files WordPress found in its package, and of those
+	 * only translation files of its language: .po, .mo, .l10n.php and .json.
+	 *
+	 * @param array|\WP_Error $result     Result of WP_Upgrader::install_package().
+	 * @param array           $hook_extra Extra arguments of the upgrader.
+	 * @return array|\WP_Error The result, unchanged.
+	 */
+	public function package_result( $result, $hook_extra = array() ) {
+		if ( ! is_array( $result ) || ! is_array( $hook_extra ) || empty( $hook_extra['language_update'] ) || ! is_object( $hook_extra['language_update'] ) ) {
+			return $result;
+		}
+		$update = $hook_extra['language_update'];
+		$key    = self::translation_key(
+			array(
+				'type'     => isset( $update->type ) ? $update->type : '',
+				'slug'     => isset( $update->slug ) ? $update->slug : 'default',
+				'language' => isset( $update->language ) ? $update->language : '',
+			)
+		);
+		if ( '' === $key || empty( $result['local_destination'] ) || empty( $result['source_files'] ) || ! is_array( $result['source_files'] ) ) {
+			return $result;
+		}
+		$dir     = untrailingslashit( wp_normalize_path( (string) $result['local_destination'] ) );
+		$pattern = '/(?:^|-)' . preg_quote( (string) $update->language, '/' ) . '(?:\.(?:po|mo|l10n\.php)|-[^\/\\\\]+\.json)$/';
+		foreach ( $result['source_files'] as $name ) {
+			$name = (string) $name;
+			// A plain file name only. A backslash is a legal character of a file
+			// name here, and normalizing the path would turn it into a folder
+			// separator: the name of another file, one the pack did not deliver.
+			if ( 1 === preg_match( $pattern, $name ) && false === strpbrk( $name, '/\\' ) && 1 !== preg_match( '/[\x00-\x1f\x7f]/', $name ) ) {
+				$this->translation_files[ $key ][] = $dir . '/' . $name;
+			}
+		}
+		return $result;
+	}
+
+	/**
+	 * @param array $pack Language pack: type (plugin, theme or core), slug, language.
+	 * @return string "type|slug|language", '' when a part is missing or has an unexpected form.
+	 */
+	private static function translation_key( array $pack ) {
+		$type     = isset( $pack['type'] ) && is_string( $pack['type'] ) ? $pack['type'] : '';
+		$slug     = isset( $pack['slug'] ) && is_string( $pack['slug'] ) ? $pack['slug'] : '';
+		$language = isset( $pack['language'] ) && is_string( $pack['language'] ) ? $pack['language'] : '';
+		if ( ! in_array( $type, array( 'plugin', 'theme', 'core' ), true ) || '' === $slug || 1 !== preg_match( '/^[A-Za-z0-9_@-]+$/', $language ) ) {
+			return '';
+		}
+		return $type . '|' . $slug . '|' . $language;
 	}
 
 	/**
@@ -473,7 +562,24 @@ class Install_Gate {
 				$monitor->rebaseline_paths( $dirs, $known );
 				$done = $dirs;
 			}
+			// Counted apart for the log: files of language packs, and core root files and single file plugins.
+			$lang       = untrailingslashit( wp_normalize_path( WP_LANG_DIR ) );
+			$lang_files = array();
+			foreach ( $files as $k => $file ) {
+				if ( Storage::is_within( $file, $lang ) ) {
+					$lang_files[] = $file;
+					unset( $files[ $k ] );
+				}
+			}
+			$files   = array_values( $files );
 			$trusted = $files ? $this->rebaseline_files( $files ) : 0;
+			// With the rules of a folder: a language file with malware in it is
+			// reported now (File_Monitor::rebaseline_files()), not by the next scan.
+			$translated = 0;
+			if ( $lang_files && method_exists( $monitor, 'rebaseline_files' ) ) {
+				$judged     = $monitor->rebaseline_files( $lang_files );
+				$translated = (int) $judged['trusted'];
+			}
 		} catch ( \Throwable $e ) {
 			$this->log(
 				'rebaseline_error',
@@ -491,14 +597,19 @@ class Install_Gate {
 			/* translators: %d: number of files */
 			$labels[] = sprintf( _n( '%d root file', '%d root files', $trusted, 'qartvelo-guard' ), $trusted );
 		}
+		if ( $translated ) {
+			/* translators: %d: number of files */
+			$labels[] = sprintf( _n( '%d translation file', '%d translation files', $translated, 'qartvelo-guard' ), $translated );
+		}
 		if ( $labels ) {
 			$this->log(
 				'rebaselined',
 				/* translators: %s: comma separated folders */
 				sprintf( __( 'Updated files were re-checked and trusted: %s', 'qartvelo-guard' ), implode( ', ', $labels ) ),
 				array(
-					'dirs'  => $done,
-					'files' => $files,
+					'dirs'         => $done,
+					'files'        => $files,
+					'translations' => $translated,
 				)
 			);
 		}

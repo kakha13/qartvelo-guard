@@ -53,7 +53,7 @@ class Notifier {
 	 */
 	public function register() {
 		add_action( self::DIGEST_HOOK, array( $this, 'send_digest' ) );
-		add_action( self::FLUSH_HOOK, array( $this, 'flush' ) );
+		add_action( self::FLUSH_HOOK, array( $this, 'flush_scheduled' ) );
 		add_action( 'wpcybersec_settings_updated', array( $this, 'schedule' ), 10, 0 );
 		add_action( 'admin_init', array( $this, 'schedule' ) );
 	}
@@ -277,8 +277,27 @@ class Notifier {
 	}
 
 	/**
+	 * The single cron event FLUSH_HOOK: sends what is queued, unless an email
+	 * went out less than THROTTLE ago. That happens when flush() ran directly
+	 * while this event was already due (it leaves such an event in place): the
+	 * queue is empty then, or holds newer alerts that wait for their turn.
+	 *
+	 * @return bool Whether an email was sent.
+	 */
+	public function flush_scheduled() {
+		$due = (int) Network::get_option( self::LAST_OPTION, 0 ) + self::THROTTLE;
+		if ( $due > time() && 'instant' === $this->mode() ) {
+			if ( $this->queue() || Network::get_option( self::SCAN_OPTION, array() ) ) {
+				$this->schedule_flush( $due );
+			}
+			return false;
+		}
+		return $this->flush();
+	}
+
+	/**
 	 * Sends everything queued (items and the last scan summary) in one email.
-	 * Runs directly or from the single cron event FLUSH_HOOK.
+	 * Runs directly or from the single cron event FLUSH_HOOK (flush_scheduled()).
 	 *
 	 * @return bool Whether an email was sent.
 	 */
@@ -298,7 +317,16 @@ class Notifier {
 		$scan = Network::get_option( self::SCAN_OPTION, array() );
 		$this->clear_queue();
 		Network::delete_option( self::SCAN_OPTION );
-		Network::clear_hook( self::FLUSH_HOOK );
+		// A flush event that waits for later is not needed any more. One that is
+		// already due stays: WordPress may be working through the due events in
+		// this very request (this call came from an earlier one, such as the last
+		// step of a scan) or in another one, and it writes "Cron unschedule event
+		// error ... could_not_set" to the error log for an event that disappeared
+		// from its list. It runs flush_scheduled(), which finds nothing to send.
+		$next = Network::next_scheduled( self::FLUSH_HOOK );
+		if ( $next && $next > time() ) {
+			Network::clear_hook( self::FLUSH_HOOK );
+		}
 
 		$items = array();
 		foreach ( $ids as $id ) {

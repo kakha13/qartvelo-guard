@@ -487,6 +487,9 @@ Files: `includes/class-scanner.php`, `includes/class-signatures.php`,
 - `rebaseline_paths(array $abs_dirs)`: synchronously re-trust files under these folders (used
   after plugin/theme/core updates), BUT files with malware hits >= 2 or checksum mismatches
   become threat items instead of trusted. Never rebaselines the whole site.
+- `rebaseline_files(array $abs_files)`: the same rules (shared `rebaseline_file()`) for single files
+  an update delivered, the files of a language pack. Looks only at those files, never at their
+  folder; skips symbolic links, files outside the scan and excluded files.
 - `evaluate($abs, $rel, $stat, $manifest_row, $job)`: decision logic shared with Scan_Job
   (may be private; Scan_Job is in the same module).
 
@@ -616,6 +619,17 @@ Files: `includes/class-upload-gate.php`, `includes/class-install-gate.php`,
   folders after a core update; the same folders are remembered as update marks with
   `Recent_Changes::remember_update()`), `file_mod_allowed` (when `freeze_mods` is on, return false
   unless unlocked).
+- Translation updates never re-trust the languages folder. `upgrader_install_package_result`
+  (`package_result()`; not `upgrader_post_install`, whose callbacks `Language_Pack_Upgrader` removes)
+  notes the files each language pack installed (`source_files` of an install that succeeded, only
+  .po, .mo, .l10n.php and .json of that language), and `upgrader_process_complete` with type
+  `translation` re-checks exactly those files with `File_Monitor::rebaseline_files()`: a clean
+  file is trusted, a file with malware hits >= 2 becomes a threat item at once.
+  `$hook_extra['translations']` alone is not enough: it also lists packs whose install failed. Any
+  other file in `WP_LANG_DIR` is left for the next scan. A name with a slash, a backslash or a
+  control character is never noted (normalizing it would name another file). The update mark of
+  a language pack is its folder, not each file (`Recent_Changes::MAX_MARKS` is small), and the
+  "rebaselined" log line carries the number of translation files, not their paths.
 - Package check (`scan_package()`): signature hits of an unpacked plugin are dropped for files that
   match the wordpress.org checksums of that slug and version (`Scanner::checksum_map()`, only with
   `use_checksums`; fetched once, only when something was found), so official test fixtures in
@@ -695,6 +709,10 @@ unlink the tmp file, and either answer `403` with the message (`block`) or strip
 - `item_created($id)`: instant mode emails recipients (throttle: one email per 10 minutes,
   queued items are summarized in the next email) and posts to `webhook_url` if set.
 - `scan_finished(array $status)`: email only when threats/new pending items were found.
+- `flush()` sends the queue now; `flush_scheduled()` is the callback of the single cron event
+  `wpcybersec_notify_flush` and waits when an email went out less than 10 minutes ago. `flush()`
+  only removes a flush event that is still in the future: deleting one that is already due makes
+  wp-cron.php log "Cron unschedule event error ... could_not_set" when it reaches that event.
 - `send_test()`: bool.
 - `send_digest()`.
 

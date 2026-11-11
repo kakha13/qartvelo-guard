@@ -133,7 +133,10 @@ Data kept on your site: for every held file the plugin records the uploading use
 * "Restore official file" for a single changed core file is replaced by a link to the core reinstall.
 * A file that was moved to quarantine out of wp-admin, wp-includes or the plugin's own folder is no longer put back there by the plugin: download it from quarantine instead, or delete the held copy.
 * After a WordPress update, files in wp-admin, wp-includes and the languages folder that the update did not deliver are no longer trusted automatically: the next scan reports them.
+* After a translation update only the files the language packs delivered are trusted again, no longer every file in the languages folder.
 * Secrets in commented-out define() lines are hidden in the file and What changed views.
+* The What changed view no longer stalls on a PHP file that is one very long line.
+* Notifications: no more "Cron unschedule event error" line in the error log when an alert is sent while WordPress runs its scheduled events.
 * The printed cron lines use the full path to wp, and real cron is confirmed only after several regular runs.
 * Changes for the WordPress.org review: admin output is escaped where it is printed, every database query is prepared (table and column names included), WordPress folders are located only through WordPress constants and functions, and PHP time limits are no longer changed.
 

@@ -931,6 +931,9 @@ class Diff {
 		if ( '' === $snippet ) {
 			return $snippet;
 		}
+		if ( self::crowded( $snippet ) ) {
+			return self::MASK; // Never an excerpt of a few hundred characters; see crowded().
+		}
 		$name  = (string) $name;
 		$found = array();
 		// The hidden start of an excerpt that begins inside a string stays out of the rest.
@@ -1519,6 +1522,15 @@ class Diff {
 
 	/* -------- PHP, line by line ---------------------------------------- */
 
+	/**
+	 * Quoted strings read on one line, and values hidden on one line. A line
+	 * with more (never a normal file: a planted one, or megabytes of generated
+	 * code without a line break) is not read: it is hidden as a whole, so the
+	 * memory one line needs stays bounded (see redact_php_lines() and
+	 * crowded()).
+	 */
+	const LINE_STRINGS = 100000;
+
 	/** Words on a line that may set a secret (fail closed check). */
 	const SECRET_WORDS = '/pass|pwd|secret|token|key|salt|auth|nonce|credential|connect|wpdb|putenv/i';
 
@@ -1530,7 +1542,16 @@ class Diff {
 	 * the next lines is followed). It hides more rather than less: every
 	 * literal and number of a secret value, also inside calls. When the lexer
 	 * ends inside a string (it lost track), every line that mentions a secret
-	 * also loses all its quoted values.
+	 * also loses all its quoted values, or is hidden as a whole when one of
+	 * its values was hidden before. A line with more than LINE_STRINGS
+	 * strings (or with LINE_STRINGS hidden values) is not read to its end, so
+	 * from there on the lexer has lost
+	 * track as well: that line and every line after it are hidden as a whole,
+	 * and the lines before it are treated the same way as after a string that
+	 * never ends.
+	 *
+	 * The work is linear in the length of a line (a planted file is often one
+	 * line of megabytes).
 	 *
 	 * @param string $text  Code.
 	 * @param array  $found Collected values.
@@ -1541,11 +1562,22 @@ class Diff {
 		$lines = explode( "\n", $text );
 		$state = ( false !== stripos( $text, '<?php' ) || false !== strpos( $text, '<?=' ) ) ? 'x' : '';
 		$carry = null;
+		$lost  = -1;   // Index of the line that was too long to read.
+		$tail  = null; // Running hash of everything hidden from that line on.
 		foreach ( $lines as $k => $line ) {
 			$cr = '';
 			if ( '' !== $line && "\r" === substr( $line, -1 ) ) {
 				$cr   = "\r";
 				$line = (string) substr( $line, 0, -1 );
+			}
+			if ( $lost >= 0 ) {
+				// After a line that was too long to read: what state the code is in is
+				// not known. Also a line of spaces only: it can be part of a value.
+				if ( '' !== $line ) {
+					hash_update( $tail, $line . "\n" );
+					$lines[ $k ] = self::MASK . $cr;
+				}
+				continue;
 			}
 			$ranges = array();
 			$from   = 0;
@@ -1559,12 +1591,25 @@ class Diff {
 				}
 			}
 			if ( $from >= 0 ) {
-				list( $code, $spans ) = self::php_scan( $line, $from, $state );
+				list( $code, $spans, $cut ) = self::php_scan( $line, $from, $state );
 				if ( null !== $carry ) {
 					$from = self::php_carry( $code, $spans, $from, $carry, $ranges, $found );
 				}
 				if ( $from >= 0 && $from < strlen( $code ) ) {
 					self::php_line( $code, $spans, $from, $ranges, $found, $carry );
+				}
+				if ( $cut >= 0 || count( $ranges ) > self::LINE_STRINGS ) {
+					// Too many strings on one line (php_scan() stopped reading), or too
+					// many hidden values (walk_value() stopped). What was decided for
+					// the part that was read may depend on the part that was not (a
+					// "." after the cut makes the strings before it part of a secret
+					// value), so nothing of this line is shown.
+					$lost  = $k;
+					$state = '';
+					$tail  = hash_init( 'sha256' );
+					hash_update( $tail, $line . "\n" );
+					$lines[ $k ] = self::MASK . $cr;
+					continue;
 				}
 			} elseif ( null !== $carry && --$carry['left'] <= 0 ) {
 				$carry = null;
@@ -1573,12 +1618,36 @@ class Diff {
 				$lines[ $k ] = self::apply_ranges( $line, $ranges ) . $cr;
 			}
 		}
-		if ( '\'' === $state || '"' === $state ) {
-			// A string that never ends: the lexer lost track somewhere.
+		if ( $lost >= 0 ) {
+			// One fingerprint for all of it (not one for each line: a file can have millions).
+			self::remember( $found, '(unreadable line)', hash_final( $tail ) );
+		}
+		if ( $lost >= 0 || '\'' === $state || '"' === $state ) {
+			// A string that never ends, or a line that was not read to its end:
+			// the lexer lost track somewhere. Every line that mentions a secret
+			// loses all its quoted values. The mention is looked for in the line
+			// as it was (a value hidden above can have taken the word with it),
+			// and a line that has such a hidden value is not trusted in any of
+			// its parts: it is hidden as a whole.
+			$original = explode( "\n", $text );
 			foreach ( $lines as $k => $line ) {
-				if ( preg_match( self::SECRET_WORDS, $line ) ) {
-					$lines[ $k ] = self::mask_line( $line, $found );
+				if ( $lost >= 0 && $k >= $lost ) {
+					break; // Hidden as a whole already.
 				}
+				if ( ! preg_match( self::SECRET_WORDS, $original[ $k ] ) ) {
+					continue;
+				}
+				if ( $line === $original[ $k ] ) {
+					$lines[ $k ] = self::mask_line( $line, $found );
+					continue;
+				}
+				$cr = '';
+				if ( "\r" === substr( $line, -1 ) ) {
+					$cr   = "\r";
+					$line = (string) substr( $line, 0, -1 );
+				}
+				self::remember( $found, '(unreadable line)', $original[ $k ] );
+				$lines[ $k ] = self::MASK . $cr;
 			}
 		}
 		return implode( "\n", $lines );
@@ -1652,12 +1721,16 @@ class Diff {
 	 * @param string $line  Line.
 	 * @param int    $from  Offset where code starts.
 	 * @param string $state Receives the state at the end of the line (see php_resume()).
-	 * @return array { 0: code (same length as the line), 1: strings: start => array( start, end, closed ) }
+	 * @return array { 0: code (same length as the line), 1: strings: start => array( start, end, closed ),
+	 *                 2: offset where reading stopped after LINE_STRINGS strings (the code from
+	 *                    there on is blank), -1 when the whole line was read }
 	 */
 	private static function php_scan( $line, $from, &$state ) {
 		$len   = strlen( $line );
-		$code  = $from > 0 ? str_repeat( ' ', $from ) . (string) substr( $line, $from ) : $line;
+		$code  = $from > 0 ? str_repeat( ' ', $from ) : '';
+		$kept  = $from; // The code is put together in pieces: the line up to here is in it.
 		$spans = array();
+		$cut   = -1;
 		$state = '';
 		$i     = $from;
 		while ( $i < $len ) {
@@ -1668,6 +1741,10 @@ class Diff {
 			$c   = $line[ $i ];
 			$two = (string) substr( $line, $i, 2 );
 			if ( '\'' === $c || '"' === $c ) {
+				if ( count( $spans ) >= self::LINE_STRINGS ) {
+					$cut = $i;
+					break;
+				}
 				$j    = $i + 1;
 				$open = true;
 				while ( $j < $len ) {
@@ -1695,14 +1772,16 @@ class Diff {
 				// A line comment ends at the line end or at the closing tag.
 				$close = strpos( $line, '?>', $i );
 				$stop  = false === $close ? $len : $close;
-				$code  = substr_replace( $code, str_repeat( ' ', $stop - $i ), $i, $stop - $i );
+				$code .= substr( $line, $kept, $i - $kept ) . str_repeat( ' ', $stop - $i );
+				$kept  = $stop;
 				$i     = $stop;
 				continue;
 			}
 			if ( '/*' === $two ) {
 				$close = strpos( $line, '*/', $i + 2 );
 				$stop  = false === $close ? $len : $close + 2;
-				$code  = substr_replace( $code, str_repeat( ' ', $stop - $i ), $i, $stop - $i );
+				$code .= substr( $line, $kept, $i - $kept ) . str_repeat( ' ', $stop - $i );
+				$kept  = $stop;
 				if ( false === $close ) {
 					$state = '*';
 					break;
@@ -1712,8 +1791,9 @@ class Diff {
 			}
 			if ( '?>' === $two ) {
 				$open = self::php_open_tag( $line, $i + 2 );
-				$stop = $open < 0 ? $len : $open;
-				$code = substr_replace( $code, str_repeat( ' ', $stop - $i ), $i, $stop - $i );
+				$stop  = $open < 0 ? $len : $open;
+				$code .= substr( $line, $kept, $i - $kept ) . str_repeat( ' ', $stop - $i );
+				$kept  = $stop;
 				if ( $open < 0 ) {
 					$state = 'x';
 					break;
@@ -1729,7 +1809,12 @@ class Diff {
 			}
 			++$i;
 		}
-		return array( $code, $spans );
+		if ( $cut >= 0 ) {
+			$code .= substr( $line, $kept, $cut - $kept ) . str_repeat( ' ', $len - $cut );
+		} elseif ( $kept < $len ) {
+			$code .= substr( $line, $kept );
+		}
+		return array( $code, $spans, $cut );
 	}
 
 	/**
@@ -1748,14 +1833,45 @@ class Diff {
 	 * @param array|null $carry  Set when a value continues on the next line.
 	 */
 	private static function php_line( $code, array $spans, $from, array &$ranges, array &$found, &$carry ) {
-		$matched = preg_match_all( self::PHP_TRIGGERS, $code, $all, PREG_SET_ORDER | PREG_OFFSET_CAPTURE, $from );
-		if ( false === $matched ) {
-			$ranges = array_merge( $ranges, self::span_ranges( $code, $found ) );
-			return;
-		}
-		$done = $from;
-		foreach ( (array) $all as $m ) {
-			$at = (int) $m[0][1];
+		// One statement at a time (not preg_match_all(): its result for a line of
+		// megabytes needs hundreds of megabytes), and the strings are followed
+		// with a cursor: the statements come in the order of the line.
+		$len    = strlen( $code );
+		$starts = array_keys( $spans );
+		$count  = count( $starts );
+		$cursor = 0;
+		$done    = $from;
+		$next    = $from;
+		$resume  = -1;    // Where a const list goes on after a value that is read here (php_const_line()).
+		$pending = false; // A statement was found and is not handled yet.
+		$at      = $len;
+		$m       = array();
+		while ( true ) {
+			if ( ! $pending ) {
+				$matched = $next < $len ? preg_match( self::PHP_TRIGGERS, $code, $m, PREG_OFFSET_CAPTURE, $next ) : 0;
+				if ( false === $matched ) {
+					$ranges = array_merge( $ranges, self::span_ranges( $code, $found ) );
+					return;
+				}
+				$at      = $matched ? (int) $m[0][1] : $len;
+				$pending = true;
+			}
+			if ( $resume >= 0 && $at >= $resume ) {
+				// No statement is left inside the value: the next entries of the list.
+				// The statement that was found waits (asking for it again would read
+				// the line once for every entry).
+				$end = self::php_const_line( $code, $spans, $resume, $ranges, $found, $carry, $resume );
+				if ( $end < 0 ) {
+					return;
+				}
+				$done = max( $done, $end );
+				continue;
+			}
+			if ( $at >= $len ) {
+				return;
+			}
+			$pending = false;
+			$next    = $at + max( 1, strlen( $m[0][0] ) );
 			if ( $at < $done ) {
 				continue;
 			}
@@ -1770,7 +1886,7 @@ class Diff {
 				if ( self::secret_key( $key ) ) {
 					$done = self::php_value( $code, $spans, $at + strlen( $m[0][0] ), ',', false, $key, $ranges, $found, $carry, true );
 				}
-			} elseif ( self::in_span( $spans, $at ) ) {
+			} elseif ( self::in_string( $spans, $starts, $count, $cursor, $at ) ) {
 				continue;
 			} elseif ( $is( 'var' ) ) {
 				$name = $m['vn'][0];
@@ -1780,7 +1896,10 @@ class Diff {
 			} elseif ( $is( 'def' ) ) {
 				$done = self::php_define_line( $code, $spans, $at + strlen( $m[0][0] ), $ranges, $found, $carry );
 			} elseif ( $is( 'const' ) ) {
-				$done = self::php_const_line( $code, $spans, $at + strlen( $m[0][0] ), $ranges, $found, $carry );
+				if ( $resume >= 0 ) {
+					continue; // Inside a value of a const list: that list goes on after it.
+				}
+				$done = self::php_const_line( $code, $spans, $at + strlen( $m[0][0] ), $ranges, $found, $carry, $resume );
 			} elseif ( $is( 'put' ) ) {
 				$done = self::php_putenv_line( $code, $spans, $at + strlen( $m[0][0] ), $ranges, $found, $carry );
 			} elseif ( $is( 'conn' ) ) {
@@ -1897,9 +2016,19 @@ class Diff {
 		$none  = null;
 		$names = '';
 		$comma = self::walk_value( $line, $spans, $pos, ',', false, $none, $names, $depth );
-		foreach ( $spans as $start => $span ) {
-			if ( $start >= $pos && ( $comma < 0 || $start < $comma ) ) {
-				$parts[] = self::span_inner( $line, $span );
+		// The strings of the name: only this part of the line is looked at.
+		$limit = $comma < 0 ? strlen( $line ) : $comma;
+		$at    = $pos;
+		while ( $at < $limit ) {
+			$at += strcspn( $line, '"\'', $at, $limit - $at );
+			if ( $at >= $limit ) {
+				break;
+			}
+			if ( isset( $spans[ $at ] ) ) {
+				$parts[] = self::span_inner( $line, $spans[ $at ] );
+				$at      = max( $at + 1, $spans[ $at ][1] );
+			} else {
+				++$at;
 			}
 		}
 		if ( $comma < 0 ) {
@@ -1923,38 +2052,50 @@ class Diff {
 	}
 
 	/**
-	 * const NAME = value[, NAME2 = value2]; on a line.
+	 * const NAME = value[, NAME2 = value2]; on a line: the entries from $pos
+	 * on, up to the first one whose name is not secret.
+	 *
+	 * The value of a secret name is hidden as a whole. The value of any other
+	 * name is not skipped: php_line() reads it like the rest of the line (it
+	 * can be an array with 'password' => '...'), and $resume tells it where
+	 * the list goes on. There is no limit on the entries.
 	 *
 	 * @param string     $line   Line.
 	 * @param array      $spans  Strings of the line (php_scan()).
-	 * @param int        $pos    Offset after "const".
+	 * @param int        $pos    Offset after "const", or of a later entry.
 	 * @param array      $ranges Ranges to hide.
 	 * @param array      $found  Collected values.
 	 * @param array|null $carry  Continuation.
-	 * @return int
+	 * @param int        $resume Receives the offset of the entry after a value that
+	 *                           php_line() has to read first, -1 when there is none.
+	 * @return int Offset up to where the line was handled, -1 when a value continues.
 	 */
-	private static function php_const_line( $line, array $spans, $pos, array &$ranges, array &$found, &$carry ) {
+	private static function php_const_line( $line, array $spans, $pos, array &$ranges, array &$found, &$carry, &$resume ) {
 		$pattern = '/\G(?:[A-Za-z_\\\\?][A-Za-z0-9_\\\\|?]*+\s++(?=[A-Za-z_][A-Za-z0-9_]*+\s*+=))?([A-Za-z_][A-Za-z0-9_]*+)\s*+=(?![=>])/';
-		for ( $guard = 0; $guard < 50; $guard++ ) {
+		$len     = strlen( $line );
+		$resume  = -1;
+		while ( true ) {
 			if ( ! preg_match( $pattern, $line, $m, 0, $pos ) ) {
 				return $pos;
 			}
 			$start = $pos + strlen( $m[0] );
-			if ( self::secret_constant( $m[1] ) ) {
-				$end = self::php_value( $line, $spans, $start, ',', true, $m[1], $ranges, $found, $carry );
-			} else {
+			if ( ! self::secret_constant( $m[1] ) ) {
 				$none   = null;
 				$values = '';
 				$depth  = 0;
 				$end    = self::walk_value( $line, $spans, $start, ',', false, $none, $values, $depth );
+				if ( $end >= 0 && $end < $len && ',' === $line[ $end ] ) {
+					$resume = $end + 1 + strspn( $line, " \t", $end + 1 );
+				}
+				return $start;
 			}
-			if ( $end < 0 || ',' !== $line[ $end ] ) {
+			$end = self::php_value( $line, $spans, $start, ',', true, $m[1], $ranges, $found, $carry );
+			if ( $end < 0 || $end >= $len || ',' !== $line[ $end ] ) {
 				return $end;
 			}
-			$pos = $end + 1;
+			$pos  = $end + 1;
 			$pos += strspn( $line, " \t", $pos );
 		}
-		return $pos;
 	}
 
 	/**
@@ -2047,7 +2188,8 @@ class Diff {
 	 * @param int        $depth   Bracket depth (carried over lines).
 	 * @param bool       $top     Only hide strings outside brackets.
 	 * @param bool|null  $concat  When given: set to true when "." joins values outside brackets.
-	 * @return int Offset of the terminator, -1 when the line ends first.
+	 * @return int Offset of the terminator, -1 when the line ends first (or after
+	 *             LINE_STRINGS hidden values: the rest of the line is hidden then).
 	 */
 	private static function walk_value( $line, array $spans, $pos, $stops, $numbers, &$ranges, &$values, &$depth, $top = false, &$concat = null ) {
 		$len  = strlen( $line );
@@ -2058,6 +2200,13 @@ class Diff {
 				break;
 			}
 			$c = $line[ $pos ];
+			if ( null !== $ranges && count( $ranges ) >= self::LINE_STRINGS ) {
+				// Too many values on one line: the rest of it is one hidden value
+				// (redact_php_lines() then hides the lines after it as well).
+				$ranges[] = array( $pos, $len );
+				$values  .= substr( $line, $pos ) . "\0";
+				return -1;
+			}
 			if ( '.' === $c ) {
 				// String concatenation, not a decimal point.
 				if ( 0 === $depth && ! ( $pos > 0 && $pos + 1 < $len && false !== strpos( '0123456789', $line[ $pos - 1 ] ) && false !== strpos( '0123456789', $line[ $pos + 1 ] ) ) ) {
@@ -2111,7 +2260,8 @@ class Diff {
 
 	/**
 	 * Quoted strings on one line ('...' and "...", backslash escapes). A
-	 * string that is not closed runs to the end of the line.
+	 * string that is not closed runs to the end of the line. Not for a line
+	 * that is crowded(): the callers hide such a line as a whole.
 	 *
 	 * @param string $line Line.
 	 * @return array start offset => array( start, end (after the closing quote), closed )
@@ -2158,30 +2308,50 @@ class Diff {
 	}
 
 	/**
-	 * @param array $spans Strings of a line (php_scan() or quoted_spans()).
-	 * @param int   $at    Offset.
-	 * @return bool Whether the offset is inside (or at the quote of) a string.
+	 * Whether an offset is inside (or at the quote of) a string. Asked for
+	 * offsets in rising order: the cursor remembers how far the strings were
+	 * passed, so a whole line costs one pass over them.
+	 *
+	 * @param array $spans  Strings of a line (php_scan()).
+	 * @param int[] $starts Their start offsets, in order.
+	 * @param int   $count  How many there are.
+	 * @param int   $cursor Index of the first string that ends after the last offset asked for.
+	 * @param int   $at     Offset.
+	 * @return bool
 	 */
-	private static function in_span( array $spans, $at ) {
-		foreach ( $spans as $span ) {
-			if ( $at >= $span[0] && $at < $span[1] ) {
-				return true;
-			}
-			if ( $span[0] > $at ) {
-				break;
-			}
+	private static function in_string( array $spans, array $starts, $count, &$cursor, $at ) {
+		while ( $cursor < $count && $spans[ $starts[ $cursor ] ][1] <= $at ) {
+			++$cursor;
 		}
-		return false;
+		return $cursor < $count && $starts[ $cursor ] <= $at;
 	}
 
 	/**
-	 * Ranges of the inner text of every quoted string on a line.
+	 * Whether a line has too many quotes to list its strings (quoted_spans()
+	 * would need a few hundred bytes for each one). Unlike php_scan() this
+	 * also counts the quotes in comments, in inline HTML and inside other
+	 * strings, hence the factor.
+	 *
+	 * @param string $line Line or excerpt.
+	 * @return bool
+	 */
+	private static function crowded( $line ) {
+		return substr_count( $line, '\'' ) + substr_count( $line, '"' ) > 2 * self::LINE_STRINGS;
+	}
+
+	/**
+	 * Ranges of the inner text of every quoted string on a line. A crowded()
+	 * line is one range: all of it.
 	 *
 	 * @param string $line  Line.
 	 * @param array  $found Collected values.
 	 * @return array
 	 */
 	private static function span_ranges( $line, array &$found ) {
+		if ( self::crowded( $line ) ) {
+			self::remember( $found, '(unreadable line)', $line );
+			return array( array( 0, strlen( $line ) ) );
+		}
 		$ranges = array();
 		foreach ( self::quoted_spans( $line ) as $span ) {
 			$inner = self::span_inner( $line, $span );

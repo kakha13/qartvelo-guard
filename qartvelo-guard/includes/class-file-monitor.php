@@ -267,13 +267,10 @@ class File_Monitor {
 			$known_real    = realpath( (string) $known );
 			$strict_dirs[] = untrailingslashit( wp_normalize_path( $known_real ? $known_real : (string) $known ) );
 		}
-		$result  = array( 'trusted' => 0, 'threats' => 0, 'skipped' => 0, 'queued' => 0 );
-		$scanner = wpcybersec()->scanner;
-		$store   = wpcybersec()->store;
-		$root    = Paths::scan_root();
-		$malware   = (bool) wpcybersec()->settings->get( 'scan_malware', true );
-		$max       = $scanner->max_bytes();
-		$snapshots = wpcybersec()->snapshots;
+		$result = array( 'trusted' => 0, 'threats' => 0, 'skipped' => 0, 'queued' => 0 );
+		$store  = wpcybersec()->store;
+		$root   = Paths::scan_root();
+		$ctx    = $this->rebaseline_context();
 
 		foreach ( $abs_dirs as $dir ) {
 			$dir = wp_normalize_path( (string) $dir );
@@ -306,66 +303,11 @@ class File_Monitor {
 			$strict  = in_array( untrailingslashit( $dir ), $strict_dirs, true );
 			$upserts = array();
 			foreach ( $files as $abs ) {
-				$rel  = Paths::rel( $abs );
-				$stat = $this->stat( $abs );
-				$sha  = Scan_Job::fingerprint( $abs, $stat['size'] );
-				if ( '' === $sha ) {
-					++$result['skipped'];
+				$row = $this->rebaseline_file( $abs, $strict, $ctx, $result );
+				if ( null === $row ) {
 					continue;
 				}
-
-				$verify    = $scanner->verify_details( $rel, $sha );
-				$hits       = array();
-				$mismatch   = 'mismatch' === $verify['reason'];
-				$executable = Paths::is_executable( $abs );
-				if ( 'match' !== $verify['verdict'] && $malware && $stat['size'] <= $max ) {
-					$hits = $scanner->scan_file( $abs, $rel );
-				}
-				$severity = $scanner->max_severity( $hits );
-
-				if ( $severity >= Store::SEV_HIGH || ( $mismatch && Scan_Job::reports_mismatch( $abs, $executable ) ) ) {
-					if ( $snapshots ) {
-						$snapshots->store( $abs, $sha );
-					}
-					// Read before the row is replaced: the version trusted before the update is the comparison base.
-					$row = $store->manifest_get( $rel );
-					$this->record_rebaseline_threat( $abs, $rel, $sha, $stat, $hits, $verify, $row, $executable );
-					$store->manifest_upsert_many(
-						array(
-							array( 'path' => $rel, 'sha256' => $sha, 'size' => $stat['size'], 'mtime' => $stat['mtime'], 'state' => Store::STATE_THREAT, 'run_id' => 'rebaseline' ),
-						)
-					);
-					++$result['threats'];
-					continue;
-				}
-
-				// Not delivered by this update: the next scan judges it (see the method comment).
-				if ( 'match' !== $verify['verdict'] ) {
-					if ( 'core' === $verify['source'] && 'unknown_file' === $verify['reason'] ) {
-						++$result['skipped'];
-						continue;
-					}
-					if ( $strict ) {
-						$row = $store->manifest_get( $rel );
-						if ( ! $row || Store::STATE_TRUSTED !== $row['state'] ) {
-							++$result['skipped'];
-							continue;
-						}
-					}
-				}
-
-				$upserts[] = array(
-					'path'   => $rel,
-					'sha256' => $sha,
-					'size'   => $stat['size'],
-					'mtime'  => $stat['mtime'],
-					'state'  => Store::STATE_TRUSTED,
-					'run_id' => 'rebaseline',
-				);
-				++$result['trusted'];
-				if ( $snapshots && $snapshots->wants( $abs, $stat['size'] ) ) {
-					$snapshots->store_trusted( $abs, $sha, $verify );
-				}
+				$upserts[] = $row;
 				if ( count( $upserts ) >= 200 ) {
 					$store->manifest_upsert_many( $upserts );
 					$upserts = array();
@@ -381,19 +323,189 @@ class File_Monitor {
 			wpcybersec()->scan_job->start_queued_rebaselines( 0 );
 		}
 
-		if ( $result['trusted'] || $result['threats'] ) {
-			wpcybersec()->logger->log(
-				'rebaseline',
-				sprintf(
-					/* translators: 1: trusted count, 2: threats count */
-					__( 'Re-baselined updated files. Trusted: %1$s, threats: %2$s.', 'qartvelo-guard' ),
-					number_format_i18n( $result['trusted'] ),
-					number_format_i18n( $result['threats'] )
-				),
-				$result
-			);
-		}
+		$this->log_rebaseline( $result );
 		return $result;
+	}
+
+	/**
+	 * Re-baselines single files an update delivered (the files of a language
+	 * pack), with the rules of rebaseline_paths(): a file that verifies by
+	 * checksum or is clean becomes trusted; a file with malware hits >= high
+	 * or a checksum mismatch becomes a threat item at once and is NOT trusted.
+	 *
+	 * Only these files are looked at, never their folder. The caller names
+	 * files it has confined to a folder already (Install_Gate::add_file()):
+	 * a path is resolved here, not checked against a folder. A file that is a
+	 * symbolic link, lies outside the scanned folders or is excluded from
+	 * scans is skipped, and so is everything after REBASELINE_MAX files: the
+	 * next scan judges those.
+	 *
+	 * @param array $abs_files Absolute files.
+	 * @return array { trusted: int, threats: int, skipped: int, queued: int }
+	 */
+	public function rebaseline_files( array $abs_files ) {
+		$result  = array( 'trusted' => 0, 'threats' => 0, 'skipped' => 0, 'queued' => 0 );
+		$store   = wpcybersec()->store;
+		$root    = Paths::scan_root();
+		$ctx     = $this->rebaseline_context();
+		$upserts = array();
+		$scope   = array(); // Resolved folder => whether the scan covers it.
+		$seen    = array();
+		$left    = self::REBASELINE_MAX;
+
+		foreach ( $abs_files as $abs ) {
+			if ( ! is_string( $abs ) || '' === $abs || false !== strpos( $abs, "\0" ) ) {
+				++$result['skipped'];
+				continue;
+			}
+			$abs = wp_normalize_path( $abs );
+			$dir = realpath( dirname( $abs ) );
+			if ( ! $dir ) {
+				++$result['skipped'];
+				continue;
+			}
+			$dir = untrailingslashit( wp_normalize_path( $dir ) );
+			$abs = $dir . '/' . basename( $abs );
+			if ( isset( $seen[ $abs ] ) ) {
+				continue;
+			}
+			$seen[ $abs ] = true;
+			if ( ! isset( $scope[ $dir ] ) ) {
+				$scope[ $dir ] = 0 === strpos( trailingslashit( $dir ), $root ) || Paths::in_full_scope( $dir );
+			}
+			if ( $left <= 0 || ! $scope[ $dir ] || is_link( $abs ) || ! @is_file( $abs ) || Paths::is_excluded( Paths::rel( $abs ) ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+				++$result['skipped'];
+				continue;
+			}
+			--$left;
+			$row = $this->rebaseline_file( $abs, false, $ctx, $result );
+			if ( null === $row ) {
+				continue;
+			}
+			$upserts[] = $row;
+			if ( count( $upserts ) >= 200 ) {
+				$store->manifest_upsert_many( $upserts );
+				$upserts = array();
+			}
+		}
+		if ( $upserts ) {
+			$store->manifest_upsert_many( $upserts );
+		}
+
+		$this->log_rebaseline( $result );
+		return $result;
+	}
+
+	/**
+	 * What rebaseline_file() needs for every file, read once.
+	 *
+	 * @return array { malware: bool, max: int }
+	 */
+	private function rebaseline_context() {
+		return array(
+			'malware' => (bool) wpcybersec()->settings->get( 'scan_malware', true ),
+			'max'     => wpcybersec()->scanner->max_bytes(),
+		);
+	}
+
+	/**
+	 * Judges one file of a rebaseline (rebaseline_paths(), rebaseline_files()).
+	 * A file with malware hits >= high or a reported checksum mismatch gets a
+	 * threat item and the manifest state "threat" here.
+	 *
+	 * @param string $abs    Absolute path.
+	 * @param bool   $strict Only a file that was trusted before may be trusted again.
+	 * @param array  $ctx    rebaseline_context().
+	 * @param array  $result Counters: trusted, threats, skipped.
+	 * @return array|null Manifest row for the caller to store (the file is
+	 *                    trusted); null when it was skipped or is a threat.
+	 */
+	private function rebaseline_file( $abs, $strict, array $ctx, array &$result ) {
+		$scanner   = wpcybersec()->scanner;
+		$store     = wpcybersec()->store;
+		$snapshots = wpcybersec()->snapshots;
+
+		$rel  = Paths::rel( $abs );
+		$stat = $this->stat( $abs );
+		$sha  = Scan_Job::fingerprint( $abs, $stat['size'] );
+		if ( '' === $sha ) {
+			++$result['skipped'];
+			return null;
+		}
+
+		$verify     = $scanner->verify_details( $rel, $sha );
+		$hits       = array();
+		$mismatch   = 'mismatch' === $verify['reason'];
+		$executable = Paths::is_executable( $abs );
+		if ( 'match' !== $verify['verdict'] && $ctx['malware'] && $stat['size'] <= $ctx['max'] ) {
+			$hits = $scanner->scan_file( $abs, $rel );
+		}
+		$severity = $scanner->max_severity( $hits );
+
+		if ( $severity >= Store::SEV_HIGH || ( $mismatch && Scan_Job::reports_mismatch( $abs, $executable ) ) ) {
+			if ( $snapshots ) {
+				$snapshots->store( $abs, $sha );
+			}
+			// Read before the row is replaced: the version trusted before the update is the comparison base.
+			$row = $store->manifest_get( $rel );
+			$this->record_rebaseline_threat( $abs, $rel, $sha, $stat, $hits, $verify, $row, $executable );
+			$store->manifest_upsert_many(
+				array(
+					array( 'path' => $rel, 'sha256' => $sha, 'size' => $stat['size'], 'mtime' => $stat['mtime'], 'state' => Store::STATE_THREAT, 'run_id' => 'rebaseline' ),
+				)
+			);
+			++$result['threats'];
+			return null;
+		}
+
+		// Not delivered by this update: the next scan judges it (see rebaseline_paths()).
+		if ( 'match' !== $verify['verdict'] ) {
+			if ( 'core' === $verify['source'] && 'unknown_file' === $verify['reason'] ) {
+				++$result['skipped'];
+				return null;
+			}
+			if ( $strict ) {
+				$row = $store->manifest_get( $rel );
+				if ( ! $row || Store::STATE_TRUSTED !== $row['state'] ) {
+					++$result['skipped'];
+					return null;
+				}
+			}
+		}
+
+		++$result['trusted'];
+		if ( $snapshots && $snapshots->wants( $abs, $stat['size'] ) ) {
+			$snapshots->store_trusted( $abs, $sha, $verify );
+		}
+		return array(
+			'path'   => $rel,
+			'sha256' => $sha,
+			'size'   => $stat['size'],
+			'mtime'  => $stat['mtime'],
+			'state'  => Store::STATE_TRUSTED,
+			'run_id' => 'rebaseline',
+		);
+	}
+
+	/**
+	 * Activity log line of a rebaseline that trusted or reported something.
+	 *
+	 * @param array $result Counters of rebaseline_paths() or rebaseline_files().
+	 */
+	private function log_rebaseline( array $result ) {
+		if ( ! $result['trusted'] && ! $result['threats'] ) {
+			return;
+		}
+		wpcybersec()->logger->log(
+			'rebaseline',
+			sprintf(
+				/* translators: 1: trusted count, 2: threats count */
+				__( 'Re-baselined updated files. Trusted: %1$s, threats: %2$s.', 'qartvelo-guard' ),
+				number_format_i18n( $result['trusted'] ),
+				number_format_i18n( $result['threats'] )
+			),
+			$result
+		);
 	}
 
 	/**
